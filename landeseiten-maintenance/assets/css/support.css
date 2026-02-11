@@ -1,0 +1,318 @@
+/**
+ * Landeseiten Maintenance - Support Modal Styles
+ */
+
+/* Admin Bar Button - match other admin bar items */
+#wp-admin-bar-lsm-support > .ab-item {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+    border-radius: 3px !important;
+    margin: 4px 6px !important;
+    padding: 0 10px !important;
+    height: 26px !important;
+    line-height: 26px !important;
+    transition: opacity 0.2s !important;
+}
+
+#wp-admin-bar-lsm-support > .ab-item:hover {
+    opacity: 0.9 !important;
+}
+
+#wp-admin-bar-lsm-support .ab-label {
+    font-size: 13px !important;
+}
+
+/* Modal Overlay */
+.lsm-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 999999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+
+.lsm-modal-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(15, 23, 42, 0.75);
+    backdrop-filter: blur(8px);
+    cursor: pointer;
+}
+
+/* Modal Container */
+.lsm-modal-container {
+    position: relative;
+    width: 100%;
+    max-width: 480px;
+    max-height: 90vh;
+    overflow-y: auto;
+    background: #ffffff;
+    border-radius: 20px;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(0,0,0,0.05);
+    animation: lsm-modal-in 0.25s ease-out;
+}
+
+@keyframes lsm-modal-in {
+    from {
+        opacity: 0;
+        transform: scale(0.9) translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
+}
+
+/* Modal Header */
+.lsm-modal-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 24px 24px 20px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border-radius: 20px 20px 0 0;
+    color: white;
+}
+
+.lsm-modal-logo {
+    flex-shrink: 0;
+    width: 48px;
+    height: 48px;
+    background: rgba(255,255,255,0.2);
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.lsm-modal-logo svg {
+    width: 32px;
+    height: 32px;
+}
+
+.lsm-modal-header h2 {
+    flex: 1;
+    margin: 0;
+    font-size: 20px;
+    font-weight: 600;
+    color: white;
+    line-height: 1.3;
+}
+
+.lsm-modal-close {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    background: rgba(255, 255, 255, 0.15);
+    border: none;
+    color: white;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    font-size: 28px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+    line-height: 1;
+    z-index: 10;
+    pointer-events: auto;
+    padding: 0;
+    margin: 0;
+}
+
+.lsm-modal-close:hover {
+    background: rgba(255, 255, 255, 0.3);
+    transform: scale(1.1);
+}
+
+/* Modal Body */
+.lsm-modal-body {
+    padding: 24px;
+}
+
+.lsm-modal-intro {
+    margin: 0 0 24px;
+    color: #64748b;
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+/* Form Groups */
+.lsm-modal .lsm-form-group {
+    margin-bottom: 20px;
+}
+
+.lsm-modal .lsm-form-group label {
+    display: block;
+    margin-bottom: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    color: #1e293b;
+}
+
+.lsm-modal .lsm-form-group input,
+.lsm-modal .lsm-form-group select,
+.lsm-modal .lsm-form-group textarea {
+    width: 100%;
+    padding: 12px 16px;
+    border: 2px solid #e2e8f0;
+    border-radius: 10px;
+    font-size: 15px;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    font-family: inherit;
+    background: #fff;
+}
+
+.lsm-modal .lsm-form-group input:focus,
+.lsm-modal .lsm-form-group select:focus,
+.lsm-modal .lsm-form-group textarea:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.1);
+}
+
+.lsm-modal .lsm-form-group input[readonly],
+.lsm-modal .lsm-input-readonly {
+    background: #f1f5f9;
+    color: #64748b;
+    cursor: not-allowed;
+}
+
+.lsm-modal .lsm-form-group textarea {
+    resize: vertical;
+    min-height: 120px;
+}
+
+.lsm-modal .lsm-form-group select {
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='%23667eea' stroke-width='2'%3E%3Cpolyline points='6,9 12,15 18,9'%3E%3C/polyline%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 14px center;
+    padding-right: 48px;
+    cursor: pointer;
+}
+
+/* Form Row - two columns */
+.lsm-modal .lsm-form-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+}
+
+.lsm-modal .lsm-form-row .lsm-form-col {
+    flex: 1;
+}
+
+@media (max-width: 500px) {
+    .lsm-modal .lsm-form-row {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Form Actions */
+.lsm-modal .lsm-form-actions {
+    display: flex;
+    gap: 12px;
+    padding-top: 8px;
+    margin-top: 8px;
+}
+
+/* Buttons */
+.lsm-modal .lsm-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 14px 24px;
+    border: none;
+    border-radius: 10px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.lsm-modal .lsm-btn-primary {
+    flex: 1;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+}
+
+.lsm-modal .lsm-btn-primary:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 20px -4px rgba(102, 126, 234, 0.5);
+}
+
+.lsm-modal .lsm-btn-secondary {
+    background: #1e293b;
+    color: white;
+}
+
+.lsm-modal .lsm-btn-secondary:hover {
+    background: #334155;
+}
+
+/* Success State */
+.lsm-success-message {
+    text-align: center;
+    padding: 40px 24px;
+}
+
+.lsm-success-icon {
+    width: 72px;
+    height: 72px;
+    margin: 0 auto 24px;
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 36px;
+    color: white;
+    box-shadow: 0 8px 20px -4px rgba(16, 185, 129, 0.4);
+}
+
+.lsm-success-message h3 {
+    margin: 0 0 12px;
+    font-size: 22px;
+    font-weight: 600;
+    color: #1e293b;
+}
+
+.lsm-success-message p {
+    margin: 0 0 28px;
+    color: #64748b;
+    font-size: 15px;
+    line-height: 1.5;
+}
+
+.lsm-success-message .lsm-btn {
+    min-width: 180px;
+}
+
+/* Responsive */
+@media (max-width: 600px) {
+    .lsm-modal-container {
+        max-height: 100vh;
+        border-radius: 20px 20px 0 0;
+        margin-top: auto;
+    }
+    
+    .lsm-modal {
+        padding: 0;
+        align-items: flex-end;
+    }
+    
+    .lsm-modal-header {
+        border-radius: 20px 20px 0 0;
+    }
+}
