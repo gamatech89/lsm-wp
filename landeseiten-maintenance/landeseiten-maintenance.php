@@ -3,7 +3,7 @@
  * Plugin Name: Landeseiten Maintenance
  * Plugin URI: https://landeseiten.at/maintenance
  * Description: Remote site management, SSO login, health monitoring, and client support for Landeseiten managed WordPress sites.
- * Version: 1.0.0
+ * Version: 2.0.0
  * Author: Landeseiten GmbH
  * Author URI: https://landeseiten.at
  * License: GPL-2.0+
@@ -20,7 +20,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Plugin constants
-define('LSM_VERSION', '1.0.0');
+define('LSM_VERSION', '2.0.0');
 define('LSM_PLUGIN_FILE', __FILE__);
 define('LSM_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('LSM_PLUGIN_URL', plugin_dir_url(__FILE__));
@@ -58,6 +58,9 @@ final class Landeseiten_Maintenance {
     private function __construct() {
         $this->includes();
         $this->init_hooks();
+
+        // Self-updater via GitHub releases
+        LSM_Updater::init();
     }
 
     /**
@@ -75,6 +78,8 @@ final class Landeseiten_Maintenance {
         require_once LSM_PLUGIN_DIR . 'includes/class-lsm-maintenance-mode.php';
         require_once LSM_PLUGIN_DIR . 'includes/class-lsm-backup.php';
         require_once LSM_PLUGIN_DIR . 'includes/class-lsm-php-errors.php';
+        require_once LSM_PLUGIN_DIR . 'includes/class-lsm-security-scanner.php';
+        require_once LSM_PLUGIN_DIR . 'includes/class-lsm-updater.php';
 
         // Admin
         if (is_admin()) {
@@ -117,24 +122,50 @@ final class Landeseiten_Maintenance {
             add_filter('xmlrpc_methods', '__return_empty_array');
         }
 
-        // REST API restrictions (block public access but allow authenticated)
-        if (!get_option('lsm_rest_api_public', true)) {
-            add_filter('rest_authentication_errors', function($result) {
-                // Skip our own namespace
-                if (isset($_SERVER['REQUEST_URI']) && strpos($_SERVER['REQUEST_URI'], '/lsm/v1/') !== false) {
-                    return $result;
-                }
-                
-                if (!is_user_logged_in()) {
-                    return new WP_Error(
-                        'rest_not_logged_in',
-                        __('You are not currently logged in.'),
-                        ['status' => 401]
-                    );
-                }
+        // REST API: Ensure LSM endpoints always work regardless of other security plugins
+        // Note: We do NOT block the REST API globally anymore - our endpoints have their own auth.
+        // This filter ONLY clears blocks from other plugins for our namespace.
+        add_filter('rest_authentication_errors', function($result) {
+            // If no error, nothing to do
+            if (!is_wp_error($result) && $result !== false) {
                 return $result;
-            }, 99);
-        }
+            }
+
+            // Check if this is an LSM request - if so, clear any errors from other plugins
+            $is_lsm_request = false;
+
+            if (isset($_SERVER['REQUEST_URI'])) {
+                $uri = urldecode($_SERVER['REQUEST_URI']);
+                if (strpos($uri, '/lsm/v1') !== false || strpos($uri, 'wp-json/lsm/') !== false) {
+                    $is_lsm_request = true;
+                }
+            }
+
+            if (!$is_lsm_request && isset($_GET['rest_route'])) {
+                if (strpos(urldecode($_GET['rest_route']), '/lsm/v1') !== false) {
+                    $is_lsm_request = true;
+                }
+            }
+
+            if (!$is_lsm_request && isset($_SERVER['PATH_INFO'])) {
+                if (strpos($_SERVER['PATH_INFO'], '/lsm/v1') !== false) {
+                    $is_lsm_request = true;
+                }
+            }
+
+            if (!$is_lsm_request && isset($_SERVER['REDIRECT_URL'])) {
+                if (strpos($_SERVER['REDIRECT_URL'], '/lsm/v1') !== false) {
+                    $is_lsm_request = true;
+                }
+            }
+
+            // For LSM requests: clear any authentication errors
+            if ($is_lsm_request) {
+                return null;
+            }
+
+            return $result;
+        }, 999);
 
         // File editing disabled - remove capabilities for editing plugins/themes
         if (get_option('lsm_file_editing_disabled', false)) {

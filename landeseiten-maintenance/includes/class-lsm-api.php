@@ -297,6 +297,20 @@ class LSM_API {
             'callback'            => [$this, 'get_security_header_snippets'],
             'permission_callback' => [$this, 'authenticate'],
         ]);
+
+        // Security Scan - Full scan
+        register_rest_route(self::NAMESPACE, '/security/scan', [
+            'methods'             => 'POST',
+            'callback'            => [$this, 'run_security_scan'],
+            'permission_callback' => [$this, 'authenticate'],
+        ]);
+
+        // Security Scan - Quick scan (lightweight)
+        register_rest_route(self::NAMESPACE, '/security/scan/quick', [
+            'methods'             => 'GET',
+            'callback'            => [$this, 'run_quick_scan'],
+            'permission_callback' => [$this, 'authenticate'],
+        ]);
     }
 
 
@@ -1659,7 +1673,7 @@ add_action('send_headers', function() {
 });
 PHP;
 
-        return rest_ensure_response([
+         return rest_ensure_response([
             'success' => true,
             'data' => [
                 'apache' => $htaccess,
@@ -1668,4 +1682,61 @@ PHP;
             ],
         ]);
     }
+
+    /**
+     * Run a full security scan.
+     *
+     * @param WP_REST_Request $request Request.
+     * @return WP_REST_Response
+     */
+    public function run_security_scan($request) {
+        // Increase limits for scan
+        if (function_exists('set_time_limit')) {
+            @set_time_limit(120);
+        }
+        @ini_set('memory_limit', '256M');
+
+        $modules = $request->get_param('modules');
+        if ($modules && is_string($modules)) {
+            $modules = explode(',', $modules);
+            $modules = array_map('trim', $modules);
+        }
+
+        $scanner = new LSM_Security_Scanner();
+        $results = $scanner->run($modules, false);
+
+        LSM_Logger::log('security_scan_completed', $results['summary']['clean'] ? 'success' : 'warning', [
+            'status'   => $results['status'],
+            'threats'  => $results['summary']['threats_found'],
+            'warnings' => $results['summary']['warnings_found'],
+            'duration' => $results['duration_seconds'],
+        ]);
+
+        return rest_ensure_response([
+            'success' => true,
+            'data'    => $results,
+        ]);
+    }
+
+    /**
+     * Run a quick security scan (lightweight).
+     *
+     * @param WP_REST_Request $request Request.
+     * @return WP_REST_Response
+     */
+    public function run_quick_scan($request) {
+        // Increase limits for scan
+        if (function_exists('set_time_limit')) {
+            @set_time_limit(90);
+        }
+
+        $scanner = new LSM_Security_Scanner();
+        $results = $scanner->run(null, true);
+
+        return rest_ensure_response([
+            'success' => true,
+            'data'    => $results,
+        ]);
+    }
 }
+
