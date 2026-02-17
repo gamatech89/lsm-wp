@@ -477,6 +477,10 @@ class LSM_API {
             require_once ABSPATH . 'wp-admin/includes/update.php';
         }
 
+        // Refresh update cache so update_available is accurate
+        wp_set_current_user(1);
+        wp_update_plugins();
+
         $all_plugins = get_plugins();
         $active_plugins = get_option('active_plugins', []);
         $auto_update_plugins = get_option('auto_update_plugins', []);

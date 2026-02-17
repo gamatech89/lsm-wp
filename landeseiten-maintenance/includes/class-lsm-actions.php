@@ -486,7 +486,13 @@ class LSM_Actions {
 
         $plugins = [];
         foreach ($plugin_updates as $file => $data) {
+            $slug = dirname($file);
+            if ($slug === '.') {
+                $slug = basename($file, '.php');
+            }
             $plugins[] = [
+                'slug'        => $slug,
+                'plugin'      => $file,
                 'file'        => $file,
                 'name'        => $data->Name,
                 'current'     => $data->Version,
