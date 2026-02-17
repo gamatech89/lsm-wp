@@ -702,6 +702,9 @@ class LSM_API {
             return new WP_Error('missing_plugin', 'Plugin file path or slug is required', ['status' => 400]);
         }
 
+        // Set admin user context — required for Plugin_Upgrader filesystem operations
+        wp_set_current_user(1);
+
         if (!function_exists('get_plugins')) {
             require_once ABSPATH . 'wp-admin/includes/plugin.php';
         }
@@ -744,26 +747,29 @@ class LSM_API {
         $update_info = $updates[$plugin];
         $new_version = $update_info->update->new_version ?? 'unknown';
 
-        // Perform the update - use bulk_upgrade with single plugin array
+        // Perform the update — use upgrade() for single plugin (not bulk_upgrade which can trigger auto-updates on other plugins)
         require_once ABSPATH . 'wp-admin/includes/class-wp-upgrader.php';
         require_once ABSPATH . 'wp-admin/includes/file.php';
         
-        $skin = new WP_Ajax_Upgrader_Skin();
+        $skin = new Automatic_Upgrader_Skin();
         $upgrader = new Plugin_Upgrader($skin);
         
-        // Use bulk_upgrade with a single-item array to update only this plugin
-        $result = $upgrader->bulk_upgrade([$plugin]);
+        $result = $upgrader->upgrade($plugin);
 
         if (is_wp_error($result)) {
             return new WP_Error('update_failed', $result->get_error_message(), ['status' => 500]);
         }
 
-        // Check if this specific plugin was updated
-        $plugin_result = $result[$plugin] ?? null;
-        if ($plugin_result === false || is_wp_error($plugin_result)) {
-            $error_msg = is_wp_error($plugin_result) ? $plugin_result->get_error_message() : 'Update failed';
+        if ($result === false) {
+            $error_msg = 'Update failed';
+            // Include skin errors for better debugging
+            $skin_errors = $skin->get_errors();
+            if ($skin_errors && $skin_errors->has_errors()) {
+                $error_msg .= ' — ' . implode('; ', $skin_errors->get_error_messages());
+            }
             return new WP_Error('update_failed', $error_msg, ['status' => 500]);
         }
+
 
         // Clear update cache
         wp_clean_plugins_cache();
@@ -775,6 +781,7 @@ class LSM_API {
             'new_version' => $new_version,
         ]);
     }
+
 
     /**
      * Activate a plugin.

@@ -526,11 +526,17 @@ class LSM_Actions {
      * @return array Result.
      */
     public static function update_all_plugins() {
+        // Set admin user context — required for Plugin_Upgrader filesystem operations
+        wp_set_current_user(1);
+
         if (!function_exists('get_plugin_updates')) {
             require_once ABSPATH . 'wp-admin/includes/update.php';
         }
         require_once ABSPATH . 'wp-admin/includes/class-wp-upgrader.php';
         require_once ABSPATH . 'wp-admin/includes/plugin-install.php';
+
+        // Refresh update cache before checking for available updates
+        wp_update_plugins();
 
         $plugin_updates = get_plugin_updates();
         $updated = [];
@@ -546,6 +552,7 @@ class LSM_Actions {
                 $failed[] = $data->Name;
             }
         }
+
 
         LSM_Logger::log('plugins_updated', 'success', [
             'updated' => count($updated),
