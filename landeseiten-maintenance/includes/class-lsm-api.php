@@ -311,6 +311,13 @@ class LSM_API {
             'callback'            => [$this, 'run_quick_scan'],
             'permission_callback' => [$this, 'authenticate'],
         ]);
+
+        // Security Scan - Progress (lightweight polling endpoint)
+        register_rest_route(self::NAMESPACE, '/security/scan/progress', [
+            'methods'             => 'GET',
+            'callback'            => [$this, 'get_scan_progress'],
+            'permission_callback' => [$this, 'authenticate'],
+        ]);
     }
 
 
@@ -1701,6 +1708,21 @@ PHP;
                 'nginx' => $nginx,
                 'php' => $php,
             ],
+        ]);
+    }
+
+    /**
+     * Get scan progress (lightweight polling endpoint).
+     *
+     * @return WP_REST_Response
+     */
+    public function get_scan_progress() {
+        $progress = LSM_Security_Scanner::get_scan_progress();
+
+        return rest_ensure_response([
+            'success' => true,
+            'data'    => $progress,
+            'scanning' => $progress !== null,
         ]);
     }
 
