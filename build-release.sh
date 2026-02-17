@@ -53,7 +53,7 @@ sed -i '' "s/define('LSM_VERSION', '.*');/define('LSM_VERSION', '${VERSION}');/"
 
 # Verify version was updated
 HEADER_VERSION=$(grep "Version:" "$MAIN_FILE" | head -1 | sed 's/.*Version: //' | tr -d '[:space:]')
-CONST_VERSION=$(grep "LSM_VERSION" "$MAIN_FILE" | head -1 | grep -oP "(?<=')[^']+(?=')" | tail -1)
+CONST_VERSION=$(grep "LSM_VERSION" "$MAIN_FILE" | head -1 | sed "s/.*'\([^']*\)'.*/\1/")
 
 echo "  Header version: $HEADER_VERSION"
 echo "  Constant version: $CONST_VERSION"
@@ -61,12 +61,16 @@ echo "  Constant version: $CONST_VERSION"
 # 2. Create zip archive
 echo -e "${GREEN}→ Creating ${ZIP_FILE}...${NC}"
 rm -f "$ZIP_FILE"
+
+# Use COPYFILE_DISABLE to prevent __MACOSX files
+export COPYFILE_DISABLE=1
 zip -r "$ZIP_FILE" "$PLUGIN_DIR/" \
-    -x "${PLUGIN_DIR}/.DS_Store" \
-    -x "${PLUGIN_DIR}/**/.DS_Store" \
-    -x "${PLUGIN_DIR}/.git/*" \
-    -x "${PLUGIN_DIR}/node_modules/*" \
-    -x "${PLUGIN_DIR}/.env"
+    -x "*.DS_Store" \
+    -x "*/.DS_Store" \
+    -x "*/.git/*" \
+    -x "*/node_modules/*" \
+    -x "*/.env"
+unset COPYFILE_DISABLE
 
 ZIP_SIZE=$(du -h "$ZIP_FILE" | cut -f1)
 echo "  Archive size: $ZIP_SIZE"
