@@ -21,6 +21,7 @@ class LSM_Updater {
 
     private const GITHUB_REPO  = 'gamatech89/lsm-wp';
     private const PLUGIN_SLUG  = 'landeseiten-maintenance';
+    private const LSM_API_URL  = 'https://api.wartung-ls.com/api';
     private const CACHE_KEY    = 'lsm_github_update_check';
     private const CACHE_TTL    = 43200; // 12 hours
     private const CACHE_ERR    = 3600;  // 1 hour on error
@@ -263,6 +264,57 @@ class LSM_Updater {
             return $cached;
         }
 
+        // Try our own API first (always reachable from any hosting)
+        $body = $this->fetch_release_from_lsm_api();
+
+        // Fallback to GitHub directly
+        if (!$body) {
+            $body = $this->fetch_release_from_github();
+        }
+
+        if (!$body) {
+            set_transient(self::CACHE_KEY, 'none', self::CACHE_ERR);
+            return null;
+        }
+
+        set_transient(self::CACHE_KEY, $body, self::CACHE_TTL);
+        return $body;
+    }
+
+    /**
+     * Fetch latest release from our own API (proxy for GitHub).
+     * This is the primary source — always reachable from any hosting.
+     */
+    private function fetch_release_from_lsm_api() {
+        $response = wp_remote_get(
+            self::LSM_API_URL . '/v1/plugin/latest-release',
+            [
+                'timeout' => 10,
+                'headers' => [
+                    'Accept'     => 'application/json',
+                    'User-Agent' => 'LSM-WordPress-Plugin/' . LSM_VERSION,
+                ],
+            ]
+        );
+
+        if (is_wp_error($response) || wp_remote_retrieve_response_code($response) !== 200) {
+            return null;
+        }
+
+        $body = json_decode(wp_remote_retrieve_body($response), true);
+
+        if (empty($body) || !isset($body['tag_name'])) {
+            return null;
+        }
+
+        return $body;
+    }
+
+    /**
+     * Fetch latest release from GitHub directly (fallback).
+     * May fail on shared hosting that blocks api.github.com.
+     */
+    private function fetch_release_from_github() {
         $response = wp_remote_get(
             'https://api.github.com/repos/' . self::GITHUB_REPO . '/releases/latest',
             [
@@ -275,18 +327,15 @@ class LSM_Updater {
         );
 
         if (is_wp_error($response) || wp_remote_retrieve_response_code($response) !== 200) {
-            set_transient(self::CACHE_KEY, 'none', self::CACHE_ERR);
             return null;
         }
 
         $body = json_decode(wp_remote_retrieve_body($response), true);
 
         if (empty($body) || !isset($body['tag_name'])) {
-            set_transient(self::CACHE_KEY, 'none', self::CACHE_ERR);
             return null;
         }
 
-        set_transient(self::CACHE_KEY, $body, self::CACHE_TTL);
         return $body;
     }
 
