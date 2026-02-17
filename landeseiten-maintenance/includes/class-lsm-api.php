@@ -1690,9 +1690,16 @@ PHP;
      * @return WP_REST_Response
      */
     public function run_security_scan($request) {
-        // Increase limits for scan
+        $scan_type = $request->get_param('scan_type') ?: 'full';
+        $valid_types = ['quick', 'standard', 'full'];
+        if (!in_array($scan_type, $valid_types)) {
+            $scan_type = 'full';
+        }
+
+        // Set time limits based on scan tier
+        $time_limits = ['quick' => 60, 'standard' => 180, 'full' => 600];
         if (function_exists('set_time_limit')) {
-            @set_time_limit(120);
+            @set_time_limit($time_limits[$scan_type]);
         }
         @ini_set('memory_limit', '256M');
 
@@ -1703,9 +1710,10 @@ PHP;
         }
 
         $scanner = new LSM_Security_Scanner();
-        $results = $scanner->run($modules, false);
+        $results = $scanner->run($modules, $scan_type);
 
         LSM_Logger::log('security_scan_completed', $results['summary']['clean'] ? 'success' : 'warning', [
+            'scan_type' => $scan_type,
             'status'   => $results['status'],
             'threats'  => $results['summary']['threats_found'],
             'warnings' => $results['summary']['warnings_found'],
@@ -1720,18 +1728,18 @@ PHP;
 
     /**
      * Run a quick security scan (lightweight).
+     * Legacy endpoint — delegates to run_security_scan with scan_type=quick.
      *
      * @param WP_REST_Request $request Request.
      * @return WP_REST_Response
      */
     public function run_quick_scan($request) {
-        // Increase limits for scan
         if (function_exists('set_time_limit')) {
-            @set_time_limit(90);
+            @set_time_limit(60);
         }
 
         $scanner = new LSM_Security_Scanner();
-        $results = $scanner->run(null, true);
+        $results = $scanner->run(null, 'quick');
 
         return rest_ensure_response([
             'success' => true,
