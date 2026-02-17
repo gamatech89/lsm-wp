@@ -755,10 +755,20 @@ class LSM_API {
         require_once ABSPATH . 'wp-admin/includes/class-wp-upgrader.php';
         require_once ABSPATH . 'wp-admin/includes/file.php';
         
+        // Disable auto-updates during this operation to prevent WordPress from updating other plugins
+        add_filter('auto_update_plugin', '__return_false', 999);
+        add_filter('auto_update_theme', '__return_false', 999);
+        add_filter('auto_update_core', '__return_false', 999);
+        
         $skin = new Automatic_Upgrader_Skin();
         $upgrader = new Plugin_Upgrader($skin);
         
         $result = $upgrader->upgrade($plugin);
+        
+        // Re-enable auto-updates after the operation
+        remove_filter('auto_update_plugin', '__return_false', 999);
+        remove_filter('auto_update_theme', '__return_false', 999);
+        remove_filter('auto_update_core', '__return_false', 999);
 
         if (is_wp_error($result)) {
             return new WP_Error('update_failed', $result->get_error_message(), ['status' => 500]);
