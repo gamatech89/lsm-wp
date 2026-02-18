@@ -43,9 +43,11 @@ class LSM_Auth {
      * @param int         $expires_in Token lifetime in seconds.
      * @param string|null $bind_ip IP to bind token to.
      * @param string|null $dashboard_user Dashboard user requesting login.
+     * @param string|null $email Email of the platform user to log in as.
+     * @param string|null $display_name Display name of the platform user.
      * @return array Token data.
      */
-    public function generate_login_token($role = 'administrator', $expires_in = 300, $bind_ip = null, $dashboard_user = null) {
+    public function generate_login_token($role = 'administrator', $expires_in = 300, $bind_ip = null, $dashboard_user = null, $email = null, $display_name = null) {
         $settings = Landeseiten_Maintenance::get_setting();
         $max_lifetime = $settings['token_lifetime'] ?? self::DEFAULT_LIFETIME;
         $expires_in = min(max(60, $expires_in), min($max_lifetime, self::MAX_LIFETIME));
@@ -59,6 +61,8 @@ class LSM_Auth {
             'expires'        => $expires,
             'bind_ip'        => $bind_ip,
             'dashboard_user' => $dashboard_user,
+            'email'          => $email ? sanitize_email($email) : null,
+            'display_name'   => $display_name ? sanitize_text_field($display_name) : null,
             'created'        => time(),
             'used'           => false,
         ];
@@ -80,6 +84,7 @@ class LSM_Auth {
             'role'           => $role,
             'expires_in'     => $expires_in,
             'dashboard_user' => $dashboard_user,
+            'email'          => $email,
         ]);
 
         return [
@@ -156,8 +161,13 @@ class LSM_Auth {
             ['option_name' => $option_name]
         );
 
-        // Find or create admin user
-        $user = $this->get_or_create_admin_user($token_data['role'], $token_data['dashboard_user']);
+        // Find or create user — prefer email-based lookup for per-user tracking
+        $user = $this->get_or_create_admin_user(
+            $token_data['role'],
+            $token_data['dashboard_user'],
+            $token_data['email'] ?? null,
+            $token_data['display_name'] ?? null
+        );
         if (is_wp_error($user)) {
             return $user;
         }
@@ -170,6 +180,7 @@ class LSM_Auth {
         LSM_Logger::log('sso_login_success', 'success', [
             'user_id'        => $user->ID,
             'user_login'     => $user->user_login,
+            'user_email'     => $user->user_email,
             'dashboard_user' => $token_data['dashboard_user'],
         ]);
 
@@ -182,12 +193,55 @@ class LSM_Auth {
     /**
      * Get or create admin user.
      *
-     * @param string $role User role.
+     * When email is provided, finds or creates a user with that specific email
+     * for per-user activity tracking. Falls back to generic admin for backward
+     * compatibility.
+     *
+     * @param string      $role User role.
      * @param string|null $dashboard_user Dashboard user identifier.
+     * @param string|null $email Email to find/create user by.
+     * @param string|null $display_name Display name for new user.
      * @return WP_User|WP_Error
      */
-    private function get_or_create_admin_user($role, $dashboard_user = null) {
-        // Try to find existing admin
+    private function get_or_create_admin_user($role, $dashboard_user = null, $email = null, $display_name = null) {
+        // If email is provided, find or create user by email (per-user tracking)
+        if ($email && is_email($email)) {
+            $user = get_user_by('email', $email);
+            if ($user) {
+                return $user;
+            }
+
+            // Create user with that email
+            $username = sanitize_user(strtolower(explode('@', $email)[0]), true);
+            $base_username = $username;
+            $counter = 1;
+            while (username_exists($username)) {
+                $username = $base_username . '_' . $counter;
+                $counter++;
+            }
+
+            $password = wp_generate_password(24);
+            $user_id = wp_create_user($username, $password, $email);
+            if (is_wp_error($user_id)) {
+                return $user_id;
+            }
+
+            $user = get_user_by('id', $user_id);
+            $user->set_role($role ?: 'administrator');
+
+            if ($display_name) {
+                wp_update_user([
+                    'ID' => $user_id,
+                    'display_name' => $display_name,
+                ]);
+            }
+
+            update_user_meta($user_id, 'lsm_managed_account', true);
+
+            return $user;
+        }
+
+        // Fallback: find existing admin (legacy behavior)
         $admins = get_users(['role' => 'administrator', 'number' => 1]);
         if (!empty($admins)) {
             return $admins[0];

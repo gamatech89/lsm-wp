@@ -271,6 +271,24 @@ class LSM_API {
             'permission_callback' => [$this, 'authenticate'],
         ]);
 
+        register_rest_route(self::NAMESPACE, '/users/create', [
+            'methods'             => 'POST',
+            'callback'            => [$this, 'create_user'],
+            'permission_callback' => [$this, 'authenticate'],
+        ]);
+
+        register_rest_route(self::NAMESPACE, '/users/delete', [
+            'methods'             => 'POST',
+            'callback'            => [$this, 'delete_user'],
+            'permission_callback' => [$this, 'authenticate'],
+        ]);
+
+        register_rest_route(self::NAMESPACE, '/users/sync', [
+            'methods'             => 'POST',
+            'callback'            => [$this, 'sync_users'],
+            'permission_callback' => [$this, 'authenticate'],
+        ]);
+
         // Security Settings
         register_rest_route(self::NAMESPACE, '/security/settings', [
             'methods'             => 'GET',
@@ -392,7 +410,9 @@ class LSM_API {
             $request->get_param('role') ?? 'administrator',
             $request->get_param('expires_in') ?? 300,
             $request->get_param('bind_ip'),
-            $request->get_param('dashboard_user')
+            $request->get_param('dashboard_user'),
+            $request->get_param('email'),
+            $request->get_param('display_name')
         );
 
         return rest_ensure_response([
@@ -1391,6 +1411,320 @@ class LSM_API {
         return rest_ensure_response([
             'success' => true,
             'data' => $user_list,
+        ]);
+    }
+
+    /**
+     * Create a WordPress user for LSM Platform team member.
+     *
+     * Idempotent — if user with email already exists, returns existing user data.
+     * Marks the user with lsm_managed_account meta for safe cleanup.
+     *
+     * @param WP_REST_Request $request Request with email, display_name, role, platform_user_id.
+     * @return WP_REST_Response
+     */
+    public function create_user($request) {
+        $email = sanitize_email($request->get_param('email'));
+        $display_name = sanitize_text_field($request->get_param('display_name') ?? '');
+        $role = sanitize_text_field($request->get_param('role') ?? 'administrator');
+        $platform_user_id = intval($request->get_param('platform_user_id') ?? 0);
+
+        if (empty($email) || !is_email($email)) {
+            return new WP_Error('invalid_email', 'A valid email address is required.', ['status' => 400]);
+        }
+
+        // Check if user with this email already exists
+        $existing_user = get_user_by('email', $email);
+        if ($existing_user) {
+            // Ensure it's marked as managed
+            update_user_meta($existing_user->ID, 'lsm_managed_account', true);
+            if ($platform_user_id) {
+                update_user_meta($existing_user->ID, 'lsm_platform_user_id', $platform_user_id);
+            }
+
+            LSM_Logger::log('user_provision_skipped', 'info', [
+                'email' => $email,
+                'user_id' => $existing_user->ID,
+                'reason' => 'User already exists',
+            ]);
+
+            return rest_ensure_response([
+                'success' => true,
+                'created' => false,
+                'data' => [
+                    'user_id' => $existing_user->ID,
+                    'username' => $existing_user->user_login,
+                    'email' => $existing_user->user_email,
+                    'display_name' => $existing_user->display_name,
+                    'roles' => $existing_user->roles,
+                ],
+            ]);
+        }
+
+        // Generate username from email (part before @)
+        $username = sanitize_user(strtolower(explode('@', $email)[0]), true);
+        // Ensure unique username
+        $base_username = $username;
+        $counter = 1;
+        while (username_exists($username)) {
+            $username = $base_username . '_' . $counter;
+            $counter++;
+        }
+
+        // Create the user with a random password (they'll use SSO to log in)
+        $password = wp_generate_password(24, true, true);
+        $user_id = wp_insert_user([
+            'user_login' => $username,
+            'user_email' => $email,
+            'user_pass' => $password,
+            'display_name' => $display_name ?: $username,
+            'role' => $role,
+        ]);
+
+        if (is_wp_error($user_id)) {
+            return new WP_Error('user_creation_failed', $user_id->get_error_message(), ['status' => 500]);
+        }
+
+        // Mark as LSM-managed account
+        update_user_meta($user_id, 'lsm_managed_account', true);
+        if ($platform_user_id) {
+            update_user_meta($user_id, 'lsm_platform_user_id', $platform_user_id);
+        }
+
+        $user = get_user_by('id', $user_id);
+
+        LSM_Logger::log('user_provisioned', 'success', [
+            'user_id' => $user_id,
+            'username' => $username,
+            'email' => $email,
+            'role' => $role,
+            'platform_user_id' => $platform_user_id,
+        ]);
+
+        return rest_ensure_response([
+            'success' => true,
+            'created' => true,
+            'data' => [
+                'user_id' => $user_id,
+                'username' => $username,
+                'email' => $email,
+                'display_name' => $user->display_name,
+                'roles' => $user->roles,
+            ],
+        ]);
+    }
+
+    /**
+     * Delete a WordPress user managed by LSM Platform.
+     *
+     * Only deletes users with lsm_managed_account meta (safety guard).
+     * Reassigns their content to the first non-managed admin.
+     *
+     * @param WP_REST_Request $request Request with email.
+     * @return WP_REST_Response
+     */
+    public function delete_user($request) {
+        $email = sanitize_email($request->get_param('email'));
+
+        if (empty($email) || !is_email($email)) {
+            return new WP_Error('invalid_email', 'A valid email address is required.', ['status' => 400]);
+        }
+
+        $user = get_user_by('email', $email);
+        if (!$user) {
+            // User doesn't exist — treat as success (idempotent)
+            return rest_ensure_response([
+                'success' => true,
+                'deleted' => false,
+                'message' => 'User not found (already removed).',
+            ]);
+        }
+
+        // Safety guard: only delete LSM-managed accounts
+        $is_managed = get_user_meta($user->ID, 'lsm_managed_account', true);
+        if (!$is_managed) {
+            return new WP_Error(
+                'not_managed_account',
+                'This user was not created by the LSM Platform and cannot be deleted remotely.',
+                ['status' => 403]
+            );
+        }
+
+        // Find a non-managed admin to reassign content to
+        $reassign_to = null;
+        $admins = get_users(['role' => 'administrator', 'number' => 10]);
+        foreach ($admins as $admin) {
+            if ($admin->ID !== $user->ID && !get_user_meta($admin->ID, 'lsm_managed_account', true)) {
+                $reassign_to = $admin->ID;
+                break;
+            }
+        }
+        // Fallback: reassign to any admin that isn't the user being deleted
+        if (!$reassign_to) {
+            foreach ($admins as $admin) {
+                if ($admin->ID !== $user->ID) {
+                    $reassign_to = $admin->ID;
+                    break;
+                }
+            }
+        }
+
+        require_once ABSPATH . 'wp-admin/includes/user.php';
+
+        $deleted_username = $user->user_login;
+        $deleted_id = $user->ID;
+        $result = wp_delete_user($user->ID, $reassign_to);
+
+        if (!$result) {
+            return new WP_Error('delete_failed', 'Failed to delete user.', ['status' => 500]);
+        }
+
+        LSM_Logger::log('user_deprovisioned', 'warning', [
+            'user_id' => $deleted_id,
+            'username' => $deleted_username,
+            'email' => $email,
+            'content_reassigned_to' => $reassign_to,
+        ]);
+
+        return rest_ensure_response([
+            'success' => true,
+            'deleted' => true,
+            'message' => "User '{$deleted_username}' has been deleted.",
+        ]);
+    }
+
+    /**
+     * Sync WordPress users with LSM Platform team.
+     *
+     * Accepts a list of expected team members. Creates missing users,
+     * deletes managed users no longer in the list.
+     *
+     * @param WP_REST_Request $request Request with 'users' array.
+     * @return WP_REST_Response
+     */
+    public function sync_users($request) {
+        $users = $request->get_param('users');
+
+        if (!is_array($users)) {
+            return new WP_Error('invalid_users', 'A users array is required.', ['status' => 400]);
+        }
+
+        $results = [
+            'created' => [],
+            'skipped' => [],
+            'deleted' => [],
+            'errors'  => [],
+        ];
+
+        // Build a set of expected emails
+        $expected_emails = [];
+        foreach ($users as $user_data) {
+            $email = sanitize_email($user_data['email'] ?? '');
+            if ($email && is_email($email)) {
+                $expected_emails[] = strtolower($email);
+            }
+        }
+
+        // Step 1: Create missing users
+        foreach ($users as $user_data) {
+            $email = sanitize_email($user_data['email'] ?? '');
+            if (empty($email) || !is_email($email)) {
+                $results['errors'][] = [
+                    'email' => $user_data['email'] ?? 'missing',
+                    'error' => 'Invalid email address.',
+                ];
+                continue;
+            }
+
+            $existing = get_user_by('email', $email);
+            if ($existing) {
+                // Update managed flag
+                update_user_meta($existing->ID, 'lsm_managed_account', true);
+                if (!empty($user_data['platform_user_id'])) {
+                    update_user_meta($existing->ID, 'lsm_platform_user_id', intval($user_data['platform_user_id']));
+                }
+                $results['skipped'][] = $email;
+                continue;
+            }
+
+            // Create user
+            $username = sanitize_user(strtolower(explode('@', $email)[0]), true);
+            $base_username = $username;
+            $counter = 1;
+            while (username_exists($username)) {
+                $username = $base_username . '_' . $counter;
+                $counter++;
+            }
+
+            $user_id = wp_insert_user([
+                'user_login' => $username,
+                'user_email' => $email,
+                'user_pass' => wp_generate_password(24, true, true),
+                'display_name' => sanitize_text_field($user_data['display_name'] ?? $username),
+                'role' => sanitize_text_field($user_data['role'] ?? 'administrator'),
+            ]);
+
+            if (is_wp_error($user_id)) {
+                $results['errors'][] = [
+                    'email' => $email,
+                    'error' => $user_id->get_error_message(),
+                ];
+                continue;
+            }
+
+            update_user_meta($user_id, 'lsm_managed_account', true);
+            if (!empty($user_data['platform_user_id'])) {
+                update_user_meta($user_id, 'lsm_platform_user_id', intval($user_data['platform_user_id']));
+            }
+
+            $results['created'][] = [
+                'email' => $email,
+                'username' => $username,
+                'user_id' => $user_id,
+            ];
+        }
+
+        // Step 2: Delete managed users no longer in the expected list
+        $managed_users = get_users([
+            'meta_key' => 'lsm_managed_account',
+            'meta_value' => '1',
+        ]);
+
+        require_once ABSPATH . 'wp-admin/includes/user.php';
+
+        foreach ($managed_users as $managed_user) {
+            $managed_email = strtolower($managed_user->user_email);
+            if (!in_array($managed_email, $expected_emails, true)) {
+                // Find reassignment target
+                $reassign_to = null;
+                $admins = get_users(['role' => 'administrator', 'number' => 5]);
+                foreach ($admins as $admin) {
+                    if ($admin->ID !== $managed_user->ID) {
+                        $reassign_to = $admin->ID;
+                        break;
+                    }
+                }
+
+                $deleted_email = $managed_user->user_email;
+                $deleted_username = $managed_user->user_login;
+                wp_delete_user($managed_user->ID, $reassign_to);
+                $results['deleted'][] = [
+                    'email' => $deleted_email,
+                    'username' => $deleted_username,
+                ];
+            }
+        }
+
+        LSM_Logger::log('users_synced', 'success', [
+            'created_count' => count($results['created']),
+            'deleted_count' => count($results['deleted']),
+            'skipped_count' => count($results['skipped']),
+            'error_count' => count($results['errors']),
+        ]);
+
+        return rest_ensure_response([
+            'success' => true,
+            'data' => $results,
         ]);
     }
 
