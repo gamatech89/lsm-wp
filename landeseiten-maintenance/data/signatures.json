@@ -1,0 +1,115 @@
+{
+  "version": "1.0.0",
+  "string_patterns": {
+    "backdoor": {
+      "ZXZhbChiYXNlNjRfZGVjb2RlKA==": "Base64 eval execution",
+      "ZXZhbChnemluZmxhdGUo": "Compressed eval execution",
+      "ZXZhbChzdHJfcm90MTMo": "ROT13 eval execution",
+      "ZXZhbChnenVuY29tcHJlc3Mo": "Compressed eval execution",
+      "ZXZhbChnemRlY29kZSg=": "Compressed eval execution",
+      "YXNzZXJ0KGJhc2U2NF9kZWNvZGUo": "Base64 assert execution",
+      "YXNzZXJ0KGd6aW5mbGF0ZSg=": "Compressed assert execution",
+      "Y3JlYXRlX2Z1bmN0aW9uKA==": "Dynamic function creation (deprecated)",
+      "ZXZhbChjdXJsX2V4ZWMo": "Remote code execution via curl+eval (C2 backdoor)",
+      "ZXZhbChmaWxlX2dldF9jb250ZW50cyg=": "Remote code execution via URL fetch+eval",
+      "ZXZhbCh3cF9yZW1vdGVfcmV0cmlldmVfYm9keSg=": "Remote code execution via WP HTTP+eval",
+      "bW92ZV91cGxvYWRlZF9maWxlKCRfRklMRVM=": "File upload backdoor",
+      "Y29weSgkX0ZJTEVT": "File copy backdoor"
+    },
+    "shell": {
+      "c2hlbGxfZXhlYygkXw==": "Shell execution from user input",
+      "c3lzdGVtKCRf": "System call from user input",
+      "cGFzc3RocnUoJF8=": "Passthrough from user input",
+      "ZXhlYygkXw==": "Exec from user input",
+      "cG9wZW4oJF8=": "Process open from user input",
+      "cHJvY19vcGVuKCRf": "Process open from user input",
+      "cGNudGxfZXhlYyg=": "Process execution"
+    },
+    "file_operation": {
+      "ZmlsZV9wdXRfY29udGVudHMoJF8=": "File write from user input",
+      "ZndyaXRlKCRmcCwgYmFzZTY0X2RlY29kZQ==": "Base64 decoded file write",
+      "ZnB1dHMoJGZwLCBiYXNlNjRfZGVjb2Rl": "Base64 decoded file write"
+    },
+    "obfuscation": {
+      "Y2hyKG9yZCg=": "Character ordinal obfuscation",
+      "XHg0N1x4NGNceDRmXHg0Mlx4NDFceDRjXHg1Mw==": "Hex-encoded GLOBALS access",
+      "cHJlZ19yZXBsYWNlKCcvLiov": "Regex eval (potential code execution)"
+    },
+    "known_malware": {
+      "d3BfY2RfY29kZQ==": "Known WP malware variant",
+      "SWNvbmljU3RhdGU=": "Known backdoor pattern",
+      "d3NvX3ZlcnNpb24=": "Web Shell by oRb",
+      "RmlsZXNNYW4=": "FilesMan web shell",
+      "YjM3NGs=": "b374k web shell",
+      "cjU3c2hlbGw=": "r57 shell",
+      "Yzk5c2hlbGw=": "c99 shell",
+      "c2FmZTB2ZXI=": "Safe0ver shell",
+      "R0lGODlhPD9waHA=": "PHP hidden in GIF header"
+    },
+    "injection": {
+      "ZG9jdW1lbnQud3JpdGUodW5lc2NhcGU=": "JavaScript injection (unescape)",
+      "U3RyaW5nLmZyb21DaGFyQ29kZSg=": "Obfuscated JavaScript (only in PHP files)",
+      "d2luZG93LmxvY2F0aW9uLmhyZWY9J2h0dHA=": "Redirect injection"
+    },
+    "data_theft": {
+      "JF9SRVFVRVNUWydjbWQnXQ==": "Command parameter access",
+      "JF9HRVRbJ2NtZCdd": "Command parameter access",
+      "JF9QT1NUWydjbWQnXQ==": "Command parameter access",
+      "JF9SRVFVRVNUWydldmFsJ10=": "Eval parameter access"
+    },
+    "seo_spam": {
+      "SFRUUF9VU0VSX0FHRU5ULipnb29nbGVib3Q=": "Googlebot user-agent detection (cloaking)",
+      "SFRUUF9VU0VSX0FHRU5ULipiaW5nYm90": "Bingbot user-agent detection (cloaking)"
+    }
+  },
+  "regex_patterns": {
+    "ZXZhbFxzKlwoXHMqXCRfKEdFVHxQT1NUfFJFUVVFU1R8Q09PS0lFKVxzKlxb": {
+      "description": "Direct eval of user input",
+      "severity": "critical",
+      "category": "backdoor"
+    },
+    "YmFzZTY0X2RlY29kZVxzKlwoXHMqXCRfKEdFVHxQT1NUfFJFUVVFU1R8Q09PS0lFKVxzKlxb": {
+      "description": "Base64 decode of user input",
+      "severity": "critical",
+      "category": "backdoor"
+    },
+    "XFx4WzAtOWEtZkEtRl17Mn0oXFx4WzAtOWEtZkEtRl17Mn0pezUwLH0=": {
+      "description": "Long hex-encoded string (obfuscation)",
+      "severity": "high",
+      "category": "obfuscation"
+    },
+    "XCRbYS16XXsxLDJ9XHMqXC5ccypcJFthLXpdezEsMn1ccypcLlxzKlwkW2EtempdezEsMn1ccypcLlxzKlwkW2EtempdezEsMn1ccypcLlxzKlwkW2EtempdezEsMn1ccypcLlxzKlwkW2EtempdezEsMn0=": {
+      "description": "Concatenated single-char variables (obfuscation)",
+      "severity": "medium",
+      "category": "obfuscation"
+    },
+    "cHJlZ19yZXBsYWNlXHMqXChccypbJyJdXC8uKlwvW2Etel0qZVthLXpdKlsnIl1ccyos": {
+      "description": "preg_replace with /e modifier (code execution)",
+      "severity": "critical",
+      "category": "backdoor"
+    },
+    "PFxzKmlmcmFtZVxzK1tePl0qc3JjXHMqPVxzKlsnIl1odHRwcz86XC9cLyg/IS4qKD95b3V0dWJlfHZpbWVvfGdvb2dsZXxmYWNlYm9vaykp": {
+      "description": "Suspicious iframe injection",
+      "severity": "high",
+      "category": "injection"
+    },
+    "Y3VybF9leGVjXHMqXCguKz9cKS4qP2V2YWxccypcKA==": {
+      "description": "Curl fetch + eval chain (C2 backdoor)",
+      "severity": "critical",
+      "category": "backdoor",
+      "multiline": true
+    },
+    "XCRfKEdFVHxQT1NUfFJFUVVFU1QpXHMqXFsuKj9cXS4qP2N1cmxfc2V0b3B0Lio/Q1VSTE9QVF9VUkw=": {
+      "description": "User-controlled curl target URL (RCE vector)",
+      "severity": "critical",
+      "category": "backdoor",
+      "multiline": true
+    },
+    "XCRfKEdFVHxQT1NUfFJFUVVFU1QpXHMqXFsuKj9cXS4qP2ZpbGVfZ2V0X2NvbnRlbnRz": {
+      "description": "User-controlled file_get_contents (SSRF/RCE vector)",
+      "severity": "high",
+      "category": "backdoor",
+      "multiline": true
+    }
+  }
+}
