@@ -98,6 +98,13 @@ class LSM_API {
             'permission_callback' => [$this, 'authenticate'],
         ]);
 
+        // Single theme update
+        register_rest_route(self::NAMESPACE, '/themes/update', [
+            'methods'             => 'POST',
+            'callback'            => [$this, 'update_single_theme'],
+            'permission_callback' => [$this, 'authenticate'],
+        ]);
+
         register_rest_route(self::NAMESPACE, '/transients/clear', [
             'methods'             => 'POST',
             'callback'            => [$this, 'clear_transients'],
@@ -594,6 +601,10 @@ class LSM_API {
             require_once ABSPATH . 'wp-admin/includes/update.php';
         }
 
+        // Refresh update cache so update_available is accurate
+        wp_set_current_user(1);
+        wp_update_themes();
+
         $all_themes = wp_get_themes();
         $active_theme = wp_get_theme();
         $theme_updates = get_theme_updates();
@@ -659,6 +670,92 @@ class LSM_API {
             'success' => true,
             'message' => 'Theme activated successfully',
             'theme'   => $slug,
+        ]);
+    }
+
+    /**
+     * Update a single theme.
+     *
+     * @param WP_REST_Request $request Request.
+     */
+    public function update_single_theme($request) {
+        $slug = $request->get_param('slug');
+        
+        if (empty($slug)) {
+            return new WP_Error('missing_slug', 'Theme slug is required', ['status' => 400]);
+        }
+
+        // Set admin user context — required for Theme_Upgrader filesystem operations
+        wp_set_current_user(1);
+
+        if (!function_exists('wp_get_themes')) {
+            require_once ABSPATH . 'wp-includes/theme.php';
+        }
+        if (!function_exists('get_theme_updates')) {
+            require_once ABSPATH . 'wp-admin/includes/update.php';
+        }
+
+        // Check if theme exists
+        $theme = wp_get_theme($slug);
+        if (!$theme->exists()) {
+            return new WP_Error('theme_not_found', 'Theme not found', ['status' => 404]);
+        }
+
+        // Refresh update cache and check if update is available
+        wp_update_themes();
+        $theme_updates = get_theme_updates();
+
+        if (!isset($theme_updates[$slug])) {
+            return rest_ensure_response([
+                'success' => false,
+                'message' => 'No update available for this theme',
+                'theme'   => $slug,
+            ]);
+        }
+
+        // Get the new version info
+        $new_version = $theme_updates[$slug]->update['new_version'] ?? 'unknown';
+
+        // Perform the update using Theme_Upgrader
+        require_once ABSPATH . 'wp-admin/includes/class-wp-upgrader.php';
+        require_once ABSPATH . 'wp-admin/includes/file.php';
+
+        // Disable auto-updates during this operation
+        add_filter('auto_update_plugin', '__return_false', 999);
+        add_filter('auto_update_theme', '__return_false', 999);
+        add_filter('auto_update_core', '__return_false', 999);
+
+        $skin = new Automatic_Upgrader_Skin();
+        $upgrader = new Theme_Upgrader($skin);
+
+        $result = $upgrader->upgrade($slug);
+
+        // Re-enable auto-updates after the operation
+        remove_filter('auto_update_plugin', '__return_false', 999);
+        remove_filter('auto_update_theme', '__return_false', 999);
+        remove_filter('auto_update_core', '__return_false', 999);
+
+        if (is_wp_error($result)) {
+            return new WP_Error('update_failed', $result->get_error_message(), ['status' => 500]);
+        }
+
+        if ($result === false) {
+            $error_msg = 'Theme update failed';
+            $skin_errors = $skin->get_errors();
+            if ($skin_errors && $skin_errors->has_errors()) {
+                $error_msg .= ' — ' . implode('; ', $skin_errors->get_error_messages());
+            }
+            return new WP_Error('update_failed', $error_msg, ['status' => 500]);
+        }
+
+        // Clear theme cache
+        wp_clean_themes_cache();
+
+        return rest_ensure_response([
+            'success'     => true,
+            'message'     => "Theme updated to version {$new_version}",
+            'theme'       => $slug,
+            'new_version' => $new_version,
         ]);
     }
 
@@ -782,6 +879,12 @@ class LSM_API {
         require_once ABSPATH . 'wp-admin/includes/class-wp-upgrader.php';
         require_once ABSPATH . 'wp-admin/includes/file.php';
         
+        // CRITICAL: Check if plugin was active BEFORE the upgrade
+        // Plugin_Upgrader->upgrade() deactivates the plugin during the process
+        // and does NOT reactivate it in REST API context (no admin session).
+        $was_active = is_plugin_active($plugin);
+        $was_network_active = is_plugin_active_for_network($plugin);
+        
         // Disable auto-updates during this operation to prevent WordPress from updating other plugins
         add_filter('auto_update_plugin', '__return_false', 999);
         add_filter('auto_update_theme', '__return_false', 999);
@@ -798,6 +901,10 @@ class LSM_API {
         remove_filter('auto_update_core', '__return_false', 999);
 
         if (is_wp_error($result)) {
+            // If the update failed but the plugin was active, try to reactivate it
+            if ($was_active) {
+                activate_plugin($plugin, '', $was_network_active, true);
+            }
             return new WP_Error('update_failed', $result->get_error_message(), ['status' => 500]);
         }
 
@@ -808,18 +915,36 @@ class LSM_API {
             if ($skin_errors && $skin_errors->has_errors()) {
                 $error_msg .= ' — ' . implode('; ', $skin_errors->get_error_messages());
             }
+            // If the update failed but the plugin was active, try to reactivate it
+            if ($was_active) {
+                activate_plugin($plugin, '', $was_network_active, true);
+            }
             return new WP_Error('update_failed', $error_msg, ['status' => 500]);
         }
 
+        // CRITICAL: Reactivate plugin if it was active before the update
+        $reactivated = false;
+        if ($was_active) {
+            $activate_result = activate_plugin($plugin, '', $was_network_active, true);
+            $reactivated = !is_wp_error($activate_result);
+            
+            if (!$reactivated) {
+                LSM_Logger::log('plugin_reactivation_failed', 'warning', [
+                    'plugin' => $plugin,
+                    'error'  => is_wp_error($activate_result) ? $activate_result->get_error_message() : 'Unknown',
+                ]);
+            }
+        }
 
         // Clear update cache
         wp_clean_plugins_cache();
 
         return rest_ensure_response([
-            'success' => true,
-            'message' => "Plugin updated to version {$new_version}",
-            'plugin'  => $plugin,
+            'success'     => true,
+            'message'     => "Plugin updated to version {$new_version}",
+            'plugin'      => $plugin,
             'new_version' => $new_version,
+            'reactivated' => $reactivated,
         ]);
     }
 

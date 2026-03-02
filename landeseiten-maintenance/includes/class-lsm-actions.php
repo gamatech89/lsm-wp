@@ -538,8 +538,12 @@ class LSM_Actions {
         if (!function_exists('get_plugin_updates')) {
             require_once ABSPATH . 'wp-admin/includes/update.php';
         }
+        if (!function_exists('is_plugin_active')) {
+            require_once ABSPATH . 'wp-admin/includes/plugin.php';
+        }
         require_once ABSPATH . 'wp-admin/includes/class-wp-upgrader.php';
         require_once ABSPATH . 'wp-admin/includes/plugin-install.php';
+        require_once ABSPATH . 'wp-admin/includes/file.php';
 
         // Refresh update cache before checking for available updates
         wp_update_plugins();
@@ -547,15 +551,59 @@ class LSM_Actions {
         $plugin_updates = get_plugin_updates();
         $updated = [];
         $failed = [];
+        $reactivated = [];
 
-        $upgrader = new Plugin_Upgrader(new Automatic_Upgrader_Skin());
+        // CRITICAL: Save active state of ALL plugins before any updates
+        $active_plugins = get_option('active_plugins', []);
+
+        // CRITICAL: Save the update transient — Plugin_Upgrader clears it after each
+        // successful upgrade, which removes download URLs for remaining plugins.
+        $saved_update_transient = get_site_transient('update_plugins');
 
         foreach ($plugin_updates as $file => $data) {
-            $result = $upgrader->upgrade($file);
-            if ($result && !is_wp_error($result)) {
-                $updated[] = $data->Name;
-            } else {
-                $failed[] = $data->Name;
+            // Restore the transient before each upgrade so download URLs are available
+            set_site_transient('update_plugins', $saved_update_transient);
+            $was_active = in_array($file, $active_plugins, true);
+            
+            try {
+                // Fresh upgrader per plugin to avoid shared state corruption
+                $upgrader = new Plugin_Upgrader(new Automatic_Upgrader_Skin());
+                $result = $upgrader->upgrade($file);
+                if ($result && !is_wp_error($result)) {
+                    $updated[] = $data->Name;
+                    
+                    // CRITICAL: Reactivate plugin if it was active before the update
+                    if ($was_active) {
+                        $activate_result = activate_plugin($file, '', false, true);
+                        if (!is_wp_error($activate_result)) {
+                            $reactivated[] = $data->Name;
+                        } else {
+                            LSM_Logger::log('plugin_reactivation_failed', 'warning', [
+                                'plugin' => $file,
+                                'error'  => $activate_result->get_error_message(),
+                            ]);
+                        }
+                    }
+                } else {
+                    $error_msg = is_wp_error($result) ? $result->get_error_message() : 'Update returned false';
+                    $failed[] = $data->Name . ' (' . $error_msg . ')';
+                    // Try to reactivate even if update failed
+                    if ($was_active && !is_plugin_active($file)) {
+                        activate_plugin($file, '', false, true);
+                    }
+                }
+            } catch (\Throwable $e) {
+                $failed[] = $data->Name . ' (' . $e->getMessage() . ')';
+                LSM_Logger::log('plugin_update_exception', 'error', [
+                    'plugin' => $file,
+                    'error'  => $e->getMessage(),
+                ]);
+                // Try to reactivate if it was active
+                if ($was_active && !is_plugin_active($file)) {
+                    try {
+                        activate_plugin($file, '', false, true);
+                    } catch (\Throwable $ignored) {}
+                }
             }
         }
 
@@ -563,12 +611,14 @@ class LSM_Actions {
         LSM_Logger::log('plugins_updated', 'success', [
             'updated' => count($updated),
             'failed'  => count($failed),
+            'reactivated' => count($reactivated),
         ]);
 
         return [
             'success'       => true,
             'updated'       => $updated,
             'failed'        => $failed,
+            'reactivated'   => $reactivated,
             'updated_count' => count($updated),
         ];
     }
