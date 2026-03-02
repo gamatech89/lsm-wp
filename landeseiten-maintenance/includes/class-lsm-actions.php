@@ -585,7 +585,29 @@ class LSM_Actions {
                         }
                     }
                 } else {
-                    $error_msg = is_wp_error($result) ? $result->get_error_message() : 'Update returned false';
+                    // Get detailed error from upgrader skin messages
+                    if (is_wp_error($result)) {
+                        $error_msg = $result->get_error_message();
+                    } else {
+                        $skin_messages = $upgrader->skin->get_upgrade_messages();
+                        $error_msg = 'Update failed';
+                        foreach ($skin_messages as $msg) {
+                            $msg_lower = strtolower($msg);
+                            if (strpos($msg_lower, 'download') !== false || strpos($msg_lower, 'not available') !== false) {
+                                $error_msg = 'Download failed — license may be required';
+                                break;
+                            }
+                            if (strpos($msg_lower, 'could not') !== false || strpos($msg_lower, 'failed') !== false) {
+                                $error_msg = strip_tags($msg);
+                                break;
+                            }
+                        }
+                        // Fallback: check if the plugin has a non-wordpress.org update URL
+                        $update_info = $saved_update_transient->response[$file] ?? null;
+                        if ($update_info && !empty($update_info->url) && strpos($update_info->url, 'wordpress.org') === false) {
+                            $error_msg = 'Premium plugin — license may be required';
+                        }
+                    }
                     $failed[] = $data->Name . ' (' . $error_msg . ')';
                     // Try to reactivate even if update failed
                     if ($was_active && !is_plugin_active($file)) {
