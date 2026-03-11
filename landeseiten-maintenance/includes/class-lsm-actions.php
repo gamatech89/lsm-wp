@@ -535,6 +535,12 @@ class LSM_Actions {
         // Set admin user context — required for Plugin_Upgrader filesystem operations
         wp_set_current_user(1);
 
+        // Force direct filesystem method — avoids request_filesystem_credentials()
+        // which requires full admin UI context not available in REST API
+        if (!defined('FS_METHOD')) {
+            define('FS_METHOD', 'direct');
+        }
+
         if (!function_exists('get_plugin_updates')) {
             require_once ABSPATH . 'wp-admin/includes/update.php';
         }
@@ -651,8 +657,17 @@ class LSM_Actions {
      * @return array Result.
      */
     public static function update_core() {
+        wp_set_current_user(1);
+
+        // Force direct filesystem method — avoids request_filesystem_credentials()
+        // which requires full admin UI context not available in REST API
+        if (!defined('FS_METHOD')) {
+            define('FS_METHOD', 'direct');
+        }
+
         require_once ABSPATH . 'wp-admin/includes/class-wp-upgrader.php';
         require_once ABSPATH . 'wp-admin/includes/update.php';
+        require_once ABSPATH . 'wp-admin/includes/file.php';
 
         $core_updates = get_core_updates();
         if (empty($core_updates) || $core_updates[0]->response !== 'upgrade') {

@@ -38,9 +38,9 @@ if [[ -z "$VERSION" ]]; then
     exit 1
 fi
 
-# Validate semver format
-if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    echo -e "${RED}Error: Version must be in semver format (e.g., 2.0.1)${NC}"
+# Validate semver format (supports optional pre-release suffix like -beta1, -rc1)
+if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
+    echo -e "${RED}Error: Version must be in semver format (e.g., 2.0.1 or 2.6.0-beta1)${NC}"
     exit 1
 fi
 
@@ -48,7 +48,7 @@ echo -e "${YELLOW}🔧 Building Landeseiten Maintenance v${VERSION}${NC}"
 
 # 1. Update version in plugin header and constant
 echo -e "${GREEN}→ Updating version to ${VERSION}...${NC}"
-sed -i '' "s/^ \* Version: .*/\ * Version: ${VERSION}/" "$MAIN_FILE"
+sed -i '' "s/^ \* Version: .*/ * Version: ${VERSION}/" "$MAIN_FILE"
 sed -i '' "s/define('LSM_VERSION', '.*');/define('LSM_VERSION', '${VERSION}');/" "$MAIN_FILE"
 
 # Verify version was updated
@@ -88,10 +88,15 @@ git push origin "$BRANCH" --tags
 
 # 4. Create GitHub release with zip
 echo -e "${GREEN}→ Creating GitHub release...${NC}"
+PRERELEASE_FLAG=""
+if [[ "$VERSION" == *-* ]]; then
+    PRERELEASE_FLAG="--prerelease"
+    echo "  (marking as pre-release)"
+fi
 gh release create "v${VERSION}" "$ZIP_FILE" \
     --title "v${VERSION}" \
     --notes "Landeseiten Maintenance Plugin v${VERSION}" \
-    --latest
+    $PRERELEASE_FLAG
 
 echo ""
 echo -e "${GREEN}✅ Released v${VERSION} successfully!${NC}"
