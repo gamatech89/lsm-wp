@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Landeseiten Maintenance
  * Description: Remote site management, SSO login, health monitoring, security scanning, and client support for Landeseiten managed WordPress sites.
- * Version: 2.5.1
+ * Version: 2.6.0-beta1
  * Author: Landeseiten GmbH
  * Author URI: https://landeseiten.at
  * License: GPL-2.0+
@@ -19,7 +19,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Plugin constants
-define('LSM_VERSION', '2.5.1');
+define('LSM_VERSION', '2.6.0-beta1');
 define('LSM_PLUGIN_FILE', __FILE__);
 define('LSM_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('LSM_PLUGIN_URL', plugin_dir_url(__FILE__));
@@ -98,13 +98,7 @@ final class Landeseiten_Maintenance {
         add_action('init', [$this, 'init'], 0);
         add_action('rest_api_init', [$this, 'init_rest_api']);
         
-        // Admin bar support button - using priority 999 to place at end
-        add_action('admin_bar_menu', [$this, 'add_support_button'], 999);
-        add_action('wp_footer', [$this, 'render_support_modal']);
-        add_action('admin_footer', [$this, 'render_support_modal']);
-        
         // Enqueue scripts
-        add_action('wp_enqueue_scripts', [$this, 'enqueue_frontend_assets']);
         add_action('admin_enqueue_scripts', [$this, 'enqueue_admin_assets']);
 
         // Security filters
@@ -400,29 +394,6 @@ final class Landeseiten_Maintenance {
      * Enqueue admin assets.
      */
     public function enqueue_admin_assets($hook) {
-        // Support modal on all admin pages
-        if (is_user_logged_in()) {
-            wp_enqueue_style(
-                'lsm-support',
-                LSM_PLUGIN_URL . 'assets/css/support.css',
-                [],
-                LSM_VERSION
-            );
-
-            wp_enqueue_script(
-                'lsm-support',
-                LSM_PLUGIN_URL . 'assets/js/support.js',
-                ['jquery'],
-                LSM_VERSION,
-                true
-            );
-
-            wp_localize_script('lsm-support', 'lsmSupport', [
-                'ajaxUrl' => admin_url('admin-ajax.php'),
-                'nonce'   => wp_create_nonce('lsm_support_nonce'),
-            ]);
-        }
-
         // Admin page styles
         if (strpos($hook, 'landeseiten') !== false) {
             wp_enqueue_style(
