@@ -78,6 +78,7 @@ final class Landeseiten_Maintenance {
         require_once LSM_PLUGIN_DIR . 'includes/class-lsm-backup.php';
         require_once LSM_PLUGIN_DIR . 'includes/class-lsm-php-errors.php';
         require_once LSM_PLUGIN_DIR . 'includes/class-lsm-security-scanner.php';
+        require_once LSM_PLUGIN_DIR . 'includes/class-lsm-media.php';
         require_once LSM_PLUGIN_DIR . 'includes/class-lsm-updater.php';
 
         // Admin
@@ -115,50 +116,42 @@ final class Landeseiten_Maintenance {
             add_filter('xmlrpc_methods', '__return_empty_array');
         }
 
-        // REST API: Ensure LSM endpoints always work regardless of other security plugins
-        // Note: We do NOT block the REST API globally anymore - our endpoints have their own auth.
-        // This filter ONLY clears blocks from other plugins for our namespace.
+        // REST API: Block user enumeration + ensure LSM endpoints always work
         add_filter('rest_authentication_errors', function($result) {
-            // If no error, nothing to do
-            if (!is_wp_error($result) && $result !== false) {
-                return $result;
+            // If there's already an error, check if it's an LSM request before passing it through
+            if (is_wp_error($result) || $result === false) {
+                $is_lsm_request = $this->is_lsm_rest_request();
+                return $is_lsm_request ? null : $result;
             }
 
-            // Check if this is an LSM request - if so, clear any errors from other plugins
-            $is_lsm_request = false;
+            // Block user enumeration via REST API when setting is enabled
+            if (!get_option('lsm_rest_api_public', true) && !is_user_logged_in()) {
+                $uri = isset($_SERVER['REQUEST_URI']) ? urldecode($_SERVER['REQUEST_URI']) : '';
+                $route = isset($_GET['rest_route']) ? urldecode($_GET['rest_route']) : '';
 
-            if (isset($_SERVER['REQUEST_URI'])) {
-                $uri = urldecode($_SERVER['REQUEST_URI']);
-                if (strpos($uri, '/lsm/v1') !== false || strpos($uri, 'wp-json/lsm/') !== false) {
-                    $is_lsm_request = true;
+                $is_users_endpoint = strpos($uri, '/wp/v2/users') !== false
+                    || strpos($route, '/wp/v2/users') !== false;
+
+                if ($is_users_endpoint) {
+                    return new \WP_Error(
+                        'rest_user_enumeration_blocked',
+                        'User enumeration is disabled.',
+                        ['status' => 403]
+                    );
                 }
-            }
-
-            if (!$is_lsm_request && isset($_GET['rest_route'])) {
-                if (strpos(urldecode($_GET['rest_route']), '/lsm/v1') !== false) {
-                    $is_lsm_request = true;
-                }
-            }
-
-            if (!$is_lsm_request && isset($_SERVER['PATH_INFO'])) {
-                if (strpos($_SERVER['PATH_INFO'], '/lsm/v1') !== false) {
-                    $is_lsm_request = true;
-                }
-            }
-
-            if (!$is_lsm_request && isset($_SERVER['REDIRECT_URL'])) {
-                if (strpos($_SERVER['REDIRECT_URL'], '/lsm/v1') !== false) {
-                    $is_lsm_request = true;
-                }
-            }
-
-            // For LSM requests: clear any authentication errors
-            if ($is_lsm_request) {
-                return null;
             }
 
             return $result;
         }, 999);
+
+        // Block ?author= query string user enumeration
+        if (!get_option('lsm_rest_api_public', true)) {
+            add_action('template_redirect', function() {
+                if (!is_user_logged_in() && isset($_GET['author'])) {
+                    wp_die('User enumeration is disabled.', 'Forbidden', ['response' => 403]);
+                }
+            });
+        }
 
         // File editing disabled - remove capabilities for editing plugins/themes
         if (get_option('lsm_file_editing_disabled', false)) {
@@ -222,6 +215,21 @@ final class Landeseiten_Maintenance {
         if (is_admin()) {
             new LSM_Admin();
         }
+    }
+
+    private function is_lsm_rest_request(): bool {
+        $checks = [
+            $_SERVER['REQUEST_URI'] ?? '',
+            $_GET['rest_route'] ?? '',
+            $_SERVER['PATH_INFO'] ?? '',
+            $_SERVER['REDIRECT_URL'] ?? '',
+        ];
+        foreach ($checks as $value) {
+            if (strpos(urldecode($value), '/lsm/v1') !== false) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
