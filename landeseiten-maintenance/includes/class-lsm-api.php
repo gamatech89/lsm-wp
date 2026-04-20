@@ -343,6 +343,24 @@ class LSM_API {
             'callback'            => [$this, 'get_scan_progress'],
             'permission_callback' => [$this, 'authenticate'],
         ]);
+
+        // =================================================================
+        // Media Library Endpoints
+        // =================================================================
+
+        // Scan for unused media
+        register_rest_route(self::NAMESPACE, '/media/unused', [
+            'methods'             => 'GET',
+            'callback'            => [$this, 'get_unused_media'],
+            'permission_callback' => [$this, 'authenticate'],
+        ]);
+
+        // Delete media attachments
+        register_rest_route(self::NAMESPACE, '/media/delete', [
+            'methods'             => 'POST',
+            'callback'            => [$this, 'delete_media'],
+            'permission_callback' => [$this, 'authenticate'],
+        ]);
     }
 
 
@@ -2242,6 +2260,50 @@ PHP;
 
         $scanner = new LSM_Security_Scanner();
         $results = $scanner->run(null, 'quick');
+
+        return rest_ensure_response([
+            'success' => true,
+            'data'    => $results,
+        ]);
+    }
+
+    // =================================================================
+    // Media Library Methods
+    // =================================================================
+
+    /**
+     * Scan for unused media attachments.
+     *
+     * @param WP_REST_Request $request Request.
+     * @return WP_REST_Response
+     */
+    public function get_unused_media($request) {
+        if (function_exists('set_time_limit')) {
+            @set_time_limit(120);
+        }
+
+        $results = LSM_Media::scan_unused_media();
+
+        return rest_ensure_response([
+            'success' => true,
+            'data'    => $results,
+        ]);
+    }
+
+    /**
+     * Delete media attachments.
+     *
+     * @param WP_REST_Request $request Request with 'ids' array.
+     * @return WP_REST_Response|WP_Error
+     */
+    public function delete_media($request) {
+        $ids = $request->get_param('ids');
+
+        if (empty($ids) || !is_array($ids)) {
+            return new WP_Error('missing_ids', 'An array of attachment IDs is required', ['status' => 400]);
+        }
+
+        $results = LSM_Media::delete_media($ids);
 
         return rest_ensure_response([
             'success' => true,
