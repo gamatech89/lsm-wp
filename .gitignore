@@ -2,3 +2,6 @@
 *.zip
 node_modules/
 .env
+
+# Local docs
+*.md
