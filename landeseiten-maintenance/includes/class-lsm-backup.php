@@ -32,9 +32,15 @@ class LSM_Backup {
         
         if (!file_exists($backup_dir)) {
             wp_mkdir_p($backup_dir);
-            // Add .htaccess to protect backups
-            file_put_contents($backup_dir . '/.htaccess', 'deny from all');
-            // Add index.php to prevent directory listing
+            // Apache: deny all direct access
+            file_put_contents($backup_dir . '/.htaccess', "Order deny,allow\nDeny from all");
+            // IIS: deny all direct access
+            file_put_contents(
+                $backup_dir . '/web.config',
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<configuration><system.webServer><authorization>"
+                . "<deny users=\"*\" /></authorization></system.webServer></configuration>"
+            );
+            // Prevent directory listing everywhere
             file_put_contents($backup_dir . '/index.php', '<?php // Silence is golden');
         }
         
@@ -63,10 +69,14 @@ class LSM_Backup {
             ];
         }
 
-        // Generate backup filename
+        // Generate backup filename. Include a random token so the archive can't
+        // be guessed/enumerated by URL even on servers where .htaccess/web.config
+        // are ignored (e.g. some nginx setups). Downloads are still gated by the
+        // one-time token in the REST endpoint.
         $timestamp = date('Y-m-d_His');
         $site_name = sanitize_file_name(parse_url(home_url(), PHP_URL_HOST));
-        $backup_name = "backup_{$site_name}_{$timestamp}.zip";
+        $random = wp_generate_password(12, false, false);
+        $backup_name = "backup_{$site_name}_{$timestamp}_{$random}.zip";
         $backup_path = self::get_backup_dir() . '/' . $backup_name;
 
         // Create temporary directory for backup files
