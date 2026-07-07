@@ -153,6 +153,18 @@ class LSM_Auth {
             return new WP_Error('token_expired', __('Login token has expired.', 'landeseiten-maintenance'));
         }
 
+        // Optional IP binding: reject the token if it is used from a different IP
+        // than the one that requested it. Disabled by default because platforms
+        // behind a reverse proxy/CDN may observe a different client IP than the
+        // WordPress host does — enable via the `lsm_enforce_token_ip_binding`
+        // filter once you've confirmed client IPs are captured consistently.
+        if (!empty($token_data['bind_ip']) && apply_filters('lsm_enforce_token_ip_binding', false)) {
+            $current_ip = $this->get_request_ip();
+            if ($current_ip && !hash_equals((string) $token_data['bind_ip'], (string) $current_ip)) {
+                return new WP_Error('token_ip_mismatch', __('This login token was issued for a different network address.', 'landeseiten-maintenance'));
+            }
+        }
+
         // Mark as used
         $token_data['used'] = true;
         $wpdb->update(
@@ -188,6 +200,40 @@ class LSM_Auth {
         wp_schedule_single_event(time() + 3600, 'lsm_cleanup_token', [$option_name]);
 
         return true;
+    }
+
+    /**
+     * Resolve a valid administrator user ID for privileged operations
+     * (plugin/theme/core upgrades run via REST need an admin context).
+     *
+     * Prefers user ID 1 when it is genuinely an administrator, otherwise falls
+     * back to the first administrator on the site. Returns 0 if none exist.
+     *
+     * @return int
+     */
+    public static function get_admin_user_id() {
+        $user_one = get_user_by('id', 1);
+        if ($user_one && in_array('administrator', (array) $user_one->roles, true)) {
+            return 1;
+        }
+
+        $admins = get_users(['role' => 'administrator', 'number' => 1, 'fields' => 'ID']);
+        return !empty($admins) ? (int) $admins[0] : 0;
+    }
+
+    /**
+     * Resolve the client IP for token binding checks.
+     *
+     * Deliberately avoids X-Forwarded-For (trivially spoofable by the client).
+     * Trusts Cloudflare's connecting-IP header when present, else REMOTE_ADDR.
+     *
+     * @return string
+     */
+    private function get_request_ip() {
+        if (!empty($_SERVER['HTTP_CF_CONNECTING_IP'])) {
+            return sanitize_text_field(wp_unslash($_SERVER['HTTP_CF_CONNECTING_IP']));
+        }
+        return isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : '';
     }
 
     /**
