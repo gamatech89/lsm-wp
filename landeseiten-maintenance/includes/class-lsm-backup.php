@@ -436,16 +436,105 @@ class LSM_Backup {
         global $wpdb;
 
         $sql = file_get_contents($sql_file);
-        
-        // Split into individual queries
-        $queries = preg_split('/;\s*$/m', $sql);
 
-        foreach ($queries as $query) {
-            $query = trim($query);
-            if (!empty($query) && strpos($query, '--') !== 0) {
-                $wpdb->query($query);
-            }
+        // Split into individual statements with a quote-aware parser so that
+        // semicolons inside string values (serialized data, post content, etc.)
+        // do not truncate statements.
+        $statements = self::parse_sql_statements($sql);
+
+        foreach ($statements as $statement) {
+            $wpdb->query($statement);
         }
+    }
+
+    /**
+     * Split a SQL dump into individual statements.
+     *
+     * String-literal aware: only splits on semicolons that are outside quoted
+     * strings, understands backslash escapes and doubled-quote escapes, and
+     * skips `-- ` line comments and `#` comments. Handles the format produced by
+     * self::export_database().
+     *
+     * @param string $sql Raw SQL dump.
+     * @return string[] Individual, trimmed, non-empty statements.
+     */
+    public static function parse_sql_statements($sql) {
+        $statements = [];
+        $current = '';
+        $len = strlen($sql);
+        $in_string = false;
+        $string_char = '';
+
+        for ($i = 0; $i < $len; $i++) {
+            $char = $sql[$i];
+
+            if ($in_string) {
+                $current .= $char;
+
+                // Backslash escape: consume the next char verbatim.
+                if ($char === '\\' && $i + 1 < $len) {
+                    $current .= $sql[$i + 1];
+                    $i++;
+                    continue;
+                }
+
+                if ($char === $string_char) {
+                    // Doubled quote ('') is an escaped quote — stay in string.
+                    if ($i + 1 < $len && $sql[$i + 1] === $string_char) {
+                        $current .= $sql[$i + 1];
+                        $i++;
+                        continue;
+                    }
+                    $in_string = false;
+                    $string_char = '';
+                }
+                continue;
+            }
+
+            // Not inside a string.
+
+            // Skip `-- ` line comments (only outside strings).
+            if ($char === '-' && $i + 1 < $len && $sql[$i + 1] === '-'
+                && ($i + 2 >= $len || in_array($sql[$i + 2], [' ', "\t", "\n", "\r"], true))) {
+                while ($i < $len && $sql[$i] !== "\n") {
+                    $i++;
+                }
+                continue;
+            }
+
+            // Skip `#` line comments.
+            if ($char === '#') {
+                while ($i < $len && $sql[$i] !== "\n") {
+                    $i++;
+                }
+                continue;
+            }
+
+            if ($char === "'" || $char === '"') {
+                $in_string = true;
+                $string_char = $char;
+                $current .= $char;
+                continue;
+            }
+
+            if ($char === ';') {
+                $trimmed = trim($current);
+                if ($trimmed !== '') {
+                    $statements[] = $trimmed;
+                }
+                $current = '';
+                continue;
+            }
+
+            $current .= $char;
+        }
+
+        $trimmed = trim($current);
+        if ($trimmed !== '') {
+            $statements[] = $trimmed;
+        }
+
+        return $statements;
     }
 
     /**
