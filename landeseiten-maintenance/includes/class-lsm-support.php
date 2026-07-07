@@ -161,8 +161,8 @@ class LSM_Support {
         
         // Get platform API URL (configurable, defaults to production)
         $api_url = apply_filters(
-            'lsm_platform_api_url', 
-            $settings['platform_api_url'] ?? 'https://landeseiten.de/api/v1/webhooks/support-ticket'
+            'lsm_platform_api_url',
+            $settings['platform_api_url'] ?? 'https://api.wartung-ls.com/api/v1/webhooks/support-ticket'
         );
 
         if (empty($api_key)) {
