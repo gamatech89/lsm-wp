@@ -19,6 +19,11 @@ class LSM_Support {
      */
     public function __construct() {
         add_action('wp_ajax_lsm_submit_support', [$this, 'handle_submit']);
+        add_action('wp_ajax_lsm_tickets_list', [$this, 'ajax_tickets_list']);
+        add_action('wp_ajax_lsm_ticket_detail', [$this, 'ajax_ticket_detail']);
+        add_action('wp_ajax_lsm_ticket_reply', [$this, 'ajax_ticket_reply']);
+        add_action('wp_ajax_lsm_ticket_attachment', [$this, 'ajax_ticket_attachment']);
+        add_action('wp_ajax_lsm_tickets_unread', [$this, 'ajax_tickets_unread']);
     }
 
     /**
@@ -92,16 +97,24 @@ class LSM_Support {
             wp_get_theme()->get('Name')
         );
 
-        // Send to LSM Platform API (Primary Action)
-        $platform_result = $this->send_to_platform([
+        // Send to LSM Platform API — try the ticket endpoint (supports
+        // attachments), fall back to the legacy webhook for older platforms.
+        $ticket_fields = [
             'type'         => $issue_type,
             'subject'      => $subject,
             'message'      => $message,
             'client_email' => $user_email,
             'client_name'  => $user_name,
             'problem_page' => $problem_page,
-            'site_url'     => $site_url,
-        ]);
+        ];
+
+        $platform_result = LSM_Ticket_Client::create_ticket($ticket_fields, $this->collect_attachments());
+
+        if (is_wp_error($platform_result)) {
+            $platform_result = $this->send_to_platform($ticket_fields + ['site_url' => $site_url]);
+        } else {
+            delete_transient('lsm_tickets_unread');
+        }
 
         // Store in local database
         $this->store_request([
@@ -235,6 +248,193 @@ class LSM_Support {
     public static function get_requests($limit = 20) {
         $requests = get_option('lsm_support_requests', []);
         return array_slice($requests, 0, $limit);
+    }
+
+    /**
+     * Shared guard for ticket AJAX actions: nonce + capability.
+     */
+    private function guard_ticket_ajax() {
+        check_ajax_referer('lsm_ticket_nonce', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => __('Not allowed.', 'landeseiten-maintenance')], 403);
+        }
+    }
+
+    /**
+     * Normalize $_FILES['attachments'] (multi-file field) into a flat list and
+     * enforce client-side limits (max 5 files, 5 MB each, allowed types).
+     *
+     * @return array [['name','type','tmp_name'], ...]
+     */
+    private function collect_attachments() {
+        if (empty($_FILES['attachments']) || !is_array($_FILES['attachments']['name'])) {
+            return [];
+        }
+
+        $allowed = ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'application/pdf'];
+        $files = [];
+        $count = count($_FILES['attachments']['name']);
+
+        for ($i = 0; $i < min($count, 5); $i++) {
+            if (($_FILES['attachments']['error'][$i] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+                continue;
+            }
+            if (($_FILES['attachments']['size'][$i] ?? 0) > 5 * 1024 * 1024) {
+                continue;
+            }
+            $type = $_FILES['attachments']['type'][$i] ?? '';
+            if (!in_array($type, $allowed, true)) {
+                continue;
+            }
+            $files[] = [
+                'name'     => $_FILES['attachments']['name'][$i],
+                'type'     => $type,
+                'tmp_name' => $_FILES['attachments']['tmp_name'][$i],
+            ];
+        }
+
+        return $files;
+    }
+
+    /**
+     * List this site's tickets + unread count for the badge.
+     */
+    public function ajax_tickets_list() {
+        $this->guard_ticket_ajax();
+
+        $tickets = LSM_Ticket_Client::list_tickets();
+        if (is_wp_error($tickets)) {
+            wp_send_json_error(['message' => $tickets->get_error_message()]);
+        }
+
+        // Merge the locally-stored "seen" marker so the widget can flag unread rows.
+        $seen = get_option('lsm_tickets_seen', []);
+        $tickets = array_map(function ($ticket) use ($seen) {
+            $ticket['seen_at'] = $seen[$ticket['id']] ?? '';
+            return $ticket;
+        }, (array) $tickets);
+
+        wp_send_json_success([
+            'tickets' => $tickets,
+            'unread'  => $this->count_unread($tickets),
+        ]);
+    }
+
+    /**
+     * One ticket with its conversation. Marks it seen for the badge.
+     */
+    public function ajax_ticket_detail() {
+        $this->guard_ticket_ajax();
+
+        $id = absint($_REQUEST['id'] ?? 0);
+        $ticket = LSM_Ticket_Client::get_ticket($id);
+        if (is_wp_error($ticket)) {
+            wp_send_json_error(['message' => $ticket->get_error_message()]);
+        }
+
+        // Remember the newest message timestamp we've shown, per ticket.
+        $seen = get_option('lsm_tickets_seen', []);
+        $latest = $ticket['created_at'] ?? '';
+        foreach (($ticket['messages'] ?? []) as $msg) {
+            if (($msg['created_at'] ?? '') > $latest) {
+                $latest = $msg['created_at'];
+            }
+        }
+        $seen[$id] = $latest;
+        update_option('lsm_tickets_seen', $seen, false);
+        delete_transient('lsm_tickets_unread');
+
+        wp_send_json_success($ticket);
+    }
+
+    /**
+     * Post a client reply (with optional attachments).
+     */
+    public function ajax_ticket_reply() {
+        $this->guard_ticket_ajax();
+
+        $id = absint($_POST['id'] ?? 0);
+        $message = sanitize_textarea_field($_POST['message'] ?? '');
+
+        if (!$id || $message === '') {
+            wp_send_json_error(['message' => __('Message is required.', 'landeseiten-maintenance')]);
+        }
+
+        $user = wp_get_current_user();
+        $result = LSM_Ticket_Client::reply($id, [
+            'message'     => $message,
+            'author_name' => $user->display_name,
+        ], $this->collect_attachments());
+
+        if (is_wp_error($result)) {
+            wp_send_json_error(['message' => $result->get_error_message()]);
+        }
+
+        delete_transient('lsm_tickets_unread');
+        wp_send_json_success($result);
+    }
+
+    /**
+     * Stream an attachment through the server (key stays server-side).
+     */
+    public function ajax_ticket_attachment() {
+        $this->guard_ticket_ajax();
+
+        $id = absint($_REQUEST['id'] ?? 0);
+        $file = LSM_Ticket_Client::get_attachment($id);
+        if (is_wp_error($file)) {
+            wp_die(esc_html($file->get_error_message()), 404);
+        }
+
+        nocache_headers();
+        header('Content-Type: ' . $file['mime']);
+        header('Content-Disposition: inline; filename="' . $file['filename'] . '"');
+        header('Content-Length: ' . strlen($file['body']));
+        header('X-Content-Type-Options: nosniff');
+        echo $file['body']; // phpcs:ignore WordPress.Security.EscapeOutput -- binary passthrough
+        exit;
+    }
+
+    /**
+     * Unread count for the widget badge (transient-cached 5 minutes).
+     */
+    public function ajax_tickets_unread() {
+        $this->guard_ticket_ajax();
+
+        $unread = get_transient('lsm_tickets_unread');
+        if ($unread === false) {
+            $tickets = LSM_Ticket_Client::list_tickets();
+            $unread = is_wp_error($tickets) ? 0 : $this->count_unread($tickets);
+            set_transient('lsm_tickets_unread', $unread, 5 * MINUTE_IN_SECONDS);
+        }
+
+        wp_send_json_success(['unread' => (int) $unread]);
+    }
+
+    /**
+     * A ticket counts as unread when the platform's last staff reply is newer
+     * than what this site has displayed (lsm_tickets_seen option).
+     *
+     * @param array $tickets Ticket summaries from the platform.
+     * @return int
+     */
+    private function count_unread($tickets) {
+        $seen = get_option('lsm_tickets_seen', []);
+        $unread = 0;
+
+        foreach ((array) $tickets as $ticket) {
+            $lastStaff = $ticket['last_staff_reply_at'] ?? null;
+            if (!$lastStaff) {
+                continue;
+            }
+            $seenAt = $seen[$ticket['id']] ?? '';
+            if ($lastStaff > $seenAt) {
+                $unread++;
+            }
+        }
+
+        return $unread;
     }
 }
 
