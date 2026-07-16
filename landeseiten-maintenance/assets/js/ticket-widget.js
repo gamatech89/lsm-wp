@@ -17,6 +17,7 @@
     tickets: [],
     ticket: null,          // detail payload
     screenshotBlob: null,
+    draft: { type: 'bug', subject: '', message: '' }, // survives re-renders (e.g. screenshot capture)
     busy: false,
   };
 
@@ -153,11 +154,15 @@
     }
     refreshShotInfo();
 
-    var typeSel = el('select', {}, ['bug', 'content', 'design', 'feature', 'question', 'urgent'].map(function (t) {
-      return el('option', { value: t, text: cfg.i18n.types[t] || t });
-    }));
-    var subject = el('input', { type: 'text', maxlength: '255' });
-    var message = el('textarea', { rows: '4' });
+    var typeSel = el('select', { onchange: function () { state.draft.type = typeSel.value; } },
+      ['bug', 'content', 'design', 'feature', 'question', 'urgent'].map(function (t) {
+        return el('option', { value: t, text: cfg.i18n.types[t] || t });
+      }));
+    typeSel.value = state.draft.type;
+    var subject = el('input', { type: 'text', maxlength: '255', oninput: function () { state.draft.subject = subject.value; } });
+    subject.value = state.draft.subject;
+    var message = el('textarea', { rows: '4', oninput: function () { state.draft.message = message.value; } });
+    message.value = state.draft.message;
     var fileInput = el('input', { type: 'file', multiple: 'multiple', accept: '.png,.jpg,.jpeg,.webp,.gif,.pdf' });
 
     var submit = el('button', { class: 'lsm-tw-btn', text: cfg.i18n.send, onclick: function () {
@@ -190,6 +195,7 @@
         .then(function (json) {
           if (!json.success) throw new Error((json.data && json.data.message) || cfg.i18n.genericError);
           state.screenshotBlob = null;
+          state.draft = { type: 'bug', subject: '', message: '' };
           state.tab = 'list';
           loadList();
           alert((json.data && json.data.message) || cfg.i18n.sent);
