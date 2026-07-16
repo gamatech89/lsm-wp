@@ -478,6 +478,7 @@ final class Landeseiten_Maintenance {
                 'yourReply'       => __('Your reply', 'landeseiten-maintenance'),
                 'replyPlaceholder'=> __('Write a reply…', 'landeseiten-maintenance'),
                 'back'            => __('Back', 'landeseiten-maintenance'),
+                'cancel'          => __('Cancel', 'landeseiten-maintenance'),
                 'noTickets'       => __('No tickets yet.', 'landeseiten-maintenance'),
                 'originalMessage' => __('Original request', 'landeseiten-maintenance'),
                 'fillRequired'    => __('Please fill in subject and message.', 'landeseiten-maintenance'),
