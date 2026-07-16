@@ -63,10 +63,11 @@
   function captureScreenshot(onDone) {
     state.open = false;
     render(); // hide the panel so it isn't in the shot
+    root.style.display = 'none'; // hide FAB too — nothing of the widget in the shot
     setTimeout(function () {
       window.html2canvas(document.body, { useCORS: true, logging: false, windowWidth: window.innerWidth })
-        .then(function (canvas) { annotate(canvas, onDone); })
-        .catch(function () { state.open = true; render(); alert(cfg.i18n.screenshotFailed); });
+        .then(function (canvas) { root.style.display = ''; annotate(canvas, onDone); })
+        .catch(function () { root.style.display = ''; state.open = true; render(); alert(cfg.i18n.screenshotFailed); });
     }, 250);
   }
 
@@ -101,7 +102,8 @@
       ctx.lineWidth = Math.max(3, work.width / 400);
       ctx.strokeRect(sx, sy, p.x - sx, p.y - sy);
     });
-    work.addEventListener('mouseup', function () { drawing = false; });
+    function stopDrawing() { drawing = false; }
+    document.addEventListener('mouseup', stopDrawing);
 
     var hint = el('div', { text: cfg.i18n.annotateHint });
     hint.style.color = '#fff';
@@ -109,12 +111,14 @@
     var buttons = el('div', {}, [
       el('button', { class: 'lsm-tw-btn', text: cfg.i18n.attachShot, onclick: function () {
         work.toBlob(function (blob) {
+          document.removeEventListener('mouseup', stopDrawing);
           document.body.removeChild(overlay);
           state.open = true;
           onDone(blob);
         }, 'image/png');
       } }),
       el('button', { class: 'lsm-tw-btn lsm-tw-btn-secondary', text: cfg.i18n.cancel, onclick: function () {
+        document.removeEventListener('mouseup', stopDrawing);
         document.body.removeChild(overlay);
         state.open = true;
         render();
