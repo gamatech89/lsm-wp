@@ -80,6 +80,7 @@ class LSM_Admin {
         $sanitized['maintenance_bg_color'] = sanitize_hex_color($input['maintenance_bg_color'] ?? '#0f172a');
         $sanitized['maintenance_text_color'] = sanitize_hex_color($input['maintenance_text_color'] ?? '#ffffff');
         $sanitized['maintenance_accent_color'] = sanitize_hex_color($input['maintenance_accent_color'] ?? '#667eea');
+        $sanitized['ticket_widget_enabled'] = !empty($input['ticket_widget_enabled']);
 
         return $sanitized;
     }
@@ -229,11 +230,19 @@ class LSM_Admin {
                                 </label>
                             </div>
 
+                            <div class="lsm-form-group">
+                                <label class="lsm-checkbox">
+                                    <input type="checkbox" name="lsm_settings[ticket_widget_enabled]" value="1" <?php checked(!empty($settings['ticket_widget_enabled'] ?? true)); ?>>
+                                    <?php esc_html_e('Show floating support widget on the site (admins only)', 'landeseiten-maintenance'); ?>
+                                </label>
+                            </div>
+
                             <!-- Hidden fields to preserve other settings -->
                             <input type="hidden" name="lsm_settings[api_key]" value="<?php echo esc_attr($settings['api_key'] ?? ''); ?>">
                             <input type="hidden" name="lsm_settings[maintenance_mode]" value="<?php echo !empty($settings['maintenance_mode']) ? '1' : '0'; ?>">
                             <input type="hidden" name="lsm_settings[maintenance_title]" value="<?php echo esc_attr($settings['maintenance_title'] ?? ''); ?>">
                             <input type="hidden" name="lsm_settings[maintenance_message]" value="<?php echo esc_attr($settings['maintenance_message'] ?? ''); ?>">
+                            <input type="hidden" name="lsm_settings[ticket_widget_enabled]" value="<?php echo !empty($settings['ticket_widget_enabled'] ?? true) ? '1' : '0'; ?>">
 
                             <button type="submit" class="lsm-btn lsm-btn-primary"><?php _e('Save Settings', 'landeseiten-maintenance'); ?></button>
                         </form>
@@ -349,6 +358,7 @@ class LSM_Admin {
                                 <input type="hidden" name="lsm_settings[support_email]" value="<?php echo esc_attr($settings['support_email'] ?? ''); ?>">
                                 <input type="hidden" name="lsm_settings[token_lifetime]" value="<?php echo esc_attr($settings['token_lifetime'] ?? 300); ?>">
                                 <input type="hidden" name="lsm_settings[enable_support]" value="<?php echo !empty($settings['enable_support']) ? '1' : '0'; ?>">
+                                <input type="hidden" name="lsm_settings[ticket_widget_enabled]" value="<?php echo !empty($settings['ticket_widget_enabled'] ?? true) ? '1' : '0'; ?>">
 
                                 <div class="lsm-form-actions lsm-form-actions-row">
                                     <button type="submit" class="lsm-btn lsm-btn-primary"><?php _e('Save', 'landeseiten-maintenance'); ?></button>
