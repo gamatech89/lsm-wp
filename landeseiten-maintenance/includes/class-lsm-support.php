@@ -387,9 +387,15 @@ class LSM_Support {
             wp_die(esc_html($file->get_error_message()), 404);
         }
 
+        // Only known-safe types are served inline; anything unexpected downloads
+        // as a generic binary so it can never render in the WP admin origin.
+        $safe_mimes = ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'application/pdf'];
+        $mime = in_array($file['mime'], $safe_mimes, true) ? $file['mime'] : 'application/octet-stream';
+        $disposition = $mime === 'application/octet-stream' ? 'attachment' : 'inline';
+
         nocache_headers();
-        header('Content-Type: ' . $file['mime']);
-        header('Content-Disposition: inline; filename="' . $file['filename'] . '"');
+        header('Content-Type: ' . $mime);
+        header('Content-Disposition: ' . $disposition . '; filename="' . $file['filename'] . '"');
         header('Content-Length: ' . strlen($file['body']));
         header('X-Content-Type-Options: nosniff');
         echo $file['body']; // phpcs:ignore WordPress.Security.EscapeOutput -- binary passthrough

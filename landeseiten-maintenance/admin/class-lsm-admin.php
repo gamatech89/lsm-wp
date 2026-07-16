@@ -242,7 +242,6 @@ class LSM_Admin {
                             <input type="hidden" name="lsm_settings[maintenance_mode]" value="<?php echo !empty($settings['maintenance_mode']) ? '1' : '0'; ?>">
                             <input type="hidden" name="lsm_settings[maintenance_title]" value="<?php echo esc_attr($settings['maintenance_title'] ?? ''); ?>">
                             <input type="hidden" name="lsm_settings[maintenance_message]" value="<?php echo esc_attr($settings['maintenance_message'] ?? ''); ?>">
-                            <input type="hidden" name="lsm_settings[ticket_widget_enabled]" value="<?php echo !empty($settings['ticket_widget_enabled'] ?? true) ? '1' : '0'; ?>">
 
                             <button type="submit" class="lsm-btn lsm-btn-primary"><?php _e('Save Settings', 'landeseiten-maintenance'); ?></button>
                         </form>
