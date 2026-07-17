@@ -1,0 +1,66 @@
+/* LSM Ticket Widget — floating support panel (admins only) */
+#lsm-ticket-widget-root { --lsm-accent: #2271b1; font-size: 14px; }
+.lsm-tw-fab {
+  position: fixed; right: 24px; bottom: 24px; z-index: 99998;
+  width: 56px; height: 56px; border-radius: 50%; border: none; cursor: pointer;
+  background: var(--lsm-accent); color: #fff; font-size: 24px; line-height: 1;
+  box-shadow: 0 4px 14px rgba(0,0,0,.25); display: flex; align-items: center; justify-content: center;
+}
+.lsm-tw-fab:hover { filter: brightness(1.1); }
+.lsm-tw-badge {
+  position: absolute; top: -4px; right: -4px; min-width: 20px; height: 20px;
+  border-radius: 10px; background: #d63638; color: #fff; font-size: 12px;
+  display: flex; align-items: center; justify-content: center; padding: 0 5px;
+}
+.lsm-tw-panel {
+  position: fixed; right: 24px; bottom: 92px; z-index: 99999;
+  width: 380px; max-width: calc(100vw - 32px); max-height: 70vh;
+  background: #fff; color: #1d2327; border-radius: 12px; overflow: hidden;
+  box-shadow: 0 8px 30px rgba(0,0,0,.3); display: flex; flex-direction: column;
+}
+.lsm-tw-header { background: var(--lsm-accent); color: #fff; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center; }
+.lsm-tw-header button { background: none; border: none; color: #fff; cursor: pointer; font-size: 18px; }
+.lsm-tw-tabs { display: flex; border-bottom: 1px solid #dcdcde; }
+.lsm-tw-tabs button { flex: 1; padding: 10px; border: none; background: #f6f7f7; cursor: pointer; font-weight: 600; }
+.lsm-tw-tabs button.active { background: #fff; border-bottom: 2px solid var(--lsm-accent); color: var(--lsm-accent); }
+.lsm-tw-body { overflow-y: auto; padding: 16px; flex: 1; }
+.lsm-tw-body label { display: block; margin: 10px 0 4px; font-weight: 600; }
+.lsm-tw-body input[type=text], .lsm-tw-body select, .lsm-tw-body textarea {
+  width: 100%; padding: 8px; border: 1px solid #8c8f94; border-radius: 4px; box-sizing: border-box; background: #fff; color: inherit;
+}
+.lsm-tw-btn { background: var(--lsm-accent); color: #fff; border: none; border-radius: 4px; padding: 10px 16px; cursor: pointer; font-weight: 600; margin-top: 12px; }
+.lsm-tw-btn[disabled] { opacity: .6; cursor: wait; }
+.lsm-tw-btn-secondary { background: #f0f0f1; color: #1d2327; }
+.lsm-tw-list-item { padding: 10px 12px; border: 1px solid #dcdcde; border-radius: 8px; margin-bottom: 8px; cursor: pointer; }
+.lsm-tw-list-item:hover { border-color: var(--lsm-accent); }
+.lsm-tw-list-item .lsm-tw-meta { color: #646970; font-size: 12px; display: flex; gap: 8px; margin-top: 4px; }
+.lsm-tw-status { padding: 1px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; background: #f0f0f1; }
+.lsm-tw-status-open { background: #d6e9ff; color: #0a4b78; }
+.lsm-tw-status-in_progress { background: #fcf0cf; color: #755100; }
+.lsm-tw-status-resolved { background: #d5efdc; color: #1e5c33; }
+.lsm-tw-unread-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #d63638; margin-right: 6px; }
+.lsm-tw-msg { margin-bottom: 10px; padding: 10px 12px; border-radius: 10px; max-width: 90%; white-space: pre-wrap; }
+.lsm-tw-msg-client { background: #f0f0f1; margin-right: auto; }
+.lsm-tw-msg-staff { background: #d6e9ff; margin-left: auto; }
+.lsm-tw-msg .lsm-tw-msg-author { font-size: 11px; color: #646970; margin-bottom: 4px; }
+.lsm-tw-attachment { display: inline-block; font-size: 12px; margin-top: 6px; color: var(--lsm-accent); text-decoration: underline; cursor: pointer; }
+.lsm-tw-shot-preview { max-width: 100%; border: 1px solid #dcdcde; border-radius: 6px; margin-top: 8px; }
+.lsm-tw-capture-row { display: flex; gap: 8px; align-items: stretch; margin-top: 4px; }
+.lsm-tw-capture-row select { flex: 1; }
+.lsm-tw-capture-row .lsm-tw-btn { margin-top: 0; white-space: nowrap; }
+.lsm-tw-annotate-overlay {
+  --lsm-accent: #2271b1; /* overlay mounts on <body>, outside the widget root that defines this */
+  position: fixed; inset: 0; z-index: 100000; background: rgba(0,0,0,.75);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+}
+.lsm-tw-tools { display: flex; gap: 6px; }
+.lsm-tw-tool {
+  background: rgba(255,255,255,.15); color: #fff; border: 1px solid rgba(255,255,255,.4);
+  border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 13px;
+}
+.lsm-tw-tool.active { background: #fff; color: #1d2327; border-color: #fff; font-weight: 600; }
+.lsm-tw-annotate-overlay canvas { max-width: 92vw; max-height: 78vh; cursor: crosshair; background: #fff; box-shadow: 0 0 0 2px #fff; }
+.lsm-tw-error { color: #d63638; margin-top: 8px; }
+.lsm-tw-success { color: #1e5c33; margin-top: 8px; }
+.lsm-tw-empty { color: #646970; text-align: center; padding: 24px 0; }
+@media (max-width: 480px) { .lsm-tw-panel { right: 8px; left: 8px; width: auto; } }

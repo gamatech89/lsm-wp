@@ -376,24 +376,25 @@ class LSM_API {
             return false;
         }
 
-        // Check query param
-        $key = $request->get_param('key');
-        if ($key === $api_key) {
+        // Preferred: X-LSM-Key header (keeps the secret out of URLs/access logs).
+        $header_key = $request->get_header('X-LSM-Key');
+        if (is_string($header_key) && hash_equals($api_key, $header_key)) {
             return true;
         }
 
-        // Check header
-        $auth_header = $request->get_header('X-LSM-Key');
-        if ($auth_header === $api_key) {
-            return true;
-        }
-
-        // Check Authorization header
+        // Authorization: Bearer <key>
         $auth = $request->get_header('Authorization');
         if ($auth && preg_match('/^Bearer\s+(.+)$/i', $auth, $matches)) {
-            if ($matches[1] === $api_key) {
+            if (hash_equals($api_key, $matches[1])) {
                 return true;
             }
+        }
+
+        // Backwards-compatible: ?key= query param. Deprecated — exposes the key in
+        // server logs. Kept so existing platform releases keep working during rollout.
+        $key = $request->get_param('key');
+        if (is_string($key) && hash_equals($api_key, $key)) {
+            return true;
         }
 
         return false;
@@ -530,7 +531,7 @@ class LSM_API {
         }
 
         // Refresh update cache so update_available is accurate
-        wp_set_current_user(1);
+        wp_set_current_user(LSM_Auth::get_admin_user_id());
         wp_update_plugins();
 
         $all_plugins = get_plugins();
@@ -620,7 +621,7 @@ class LSM_API {
         }
 
         // Refresh update cache so update_available is accurate
-        wp_set_current_user(1);
+        wp_set_current_user(LSM_Auth::get_admin_user_id());
         wp_update_themes();
 
         $all_themes = wp_get_themes();
@@ -704,7 +705,7 @@ class LSM_API {
         }
 
         // Set admin user context — required for Theme_Upgrader filesystem operations
-        wp_set_current_user(1);
+        wp_set_current_user(LSM_Auth::get_admin_user_id());
 
         if (!function_exists('wp_get_themes')) {
             require_once ABSPATH . 'wp-includes/theme.php';
@@ -849,7 +850,7 @@ class LSM_API {
         }
 
         // Set admin user context — required for Plugin_Upgrader filesystem operations
-        wp_set_current_user(1);
+        wp_set_current_user(LSM_Auth::get_admin_user_id());
 
         if (!function_exists('get_plugins')) {
             require_once ABSPATH . 'wp-admin/includes/plugin.php';

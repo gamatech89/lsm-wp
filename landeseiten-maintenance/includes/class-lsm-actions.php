@@ -533,7 +533,13 @@ class LSM_Actions {
      */
     public static function update_all_plugins() {
         // Set admin user context — required for Plugin_Upgrader filesystem operations
-        wp_set_current_user(1);
+        wp_set_current_user(LSM_Auth::get_admin_user_id());
+
+        // Force direct filesystem method — avoids request_filesystem_credentials()
+        // which requires full admin UI context not available in REST API
+        if (!defined('FS_METHOD')) {
+            define('FS_METHOD', 'direct');
+        }
 
         // Force direct filesystem method — avoids request_filesystem_credentials()
         // which requires full admin UI context not available in REST API
@@ -657,7 +663,7 @@ class LSM_Actions {
      * @return array Result.
      */
     public static function update_core() {
-        wp_set_current_user(1);
+        wp_set_current_user(LSM_Auth::get_admin_user_id());
 
         // Force direct filesystem method — avoids request_filesystem_credentials()
         // which requires full admin UI context not available in REST API
