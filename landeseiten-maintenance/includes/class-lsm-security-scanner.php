@@ -161,8 +161,27 @@ class LSM_Security_Scanner {
         // 5. ⭐ NEW: PHP code embedded in image files
         $this->find_php_in_images($uploads_dir, $result);
 
-        // 6. ⭐ NEW: Fake plugin directories
-        $this->detect_fake_plugins($result);
+        // 6. Plugin directory listing (metadata only) — fake-plugin classification
+        // is deferred to the server, which evaluates has_readme/has_header/dirname.
+        $plugins_dir = WP_CONTENT_DIR . '/plugins';
+        if (is_dir($plugins_dir)) {
+            foreach (glob($plugins_dir . '/*', GLOB_ONLYDIR) ?: [] as $dir) {
+                $dirname = basename($dir);
+                $main_file = $dir . '/' . $dirname . '.php';
+                $has_header = false;
+                if (file_exists($main_file)) {
+                    $header = @file_get_contents($main_file, false, null, 0, 2000);
+                    $has_header = $header && stripos($header, 'Plugin Name:') !== false;
+                }
+                $result['findings'][] = [
+                    'type' => 'plugin_dir',
+                    'severity' => 'info',
+                    'dir' => $dirname,
+                    'has_readme' => file_exists($dir . '/readme.txt'),
+                    'has_header' => $has_header,
+                ];
+            }
+        }
 
         if (!empty($result['findings'])) {
             $has_high = false;
@@ -211,11 +230,10 @@ class LSM_Security_Scanner {
     }
 
     /**
-     * Detect fake plugin directories.
-     * Catches rogue plugins like the "developer-toolkit" found in baucubmedia.de.
+     * Public wrapper around detect_suspicious_files() for use by LSM_Scan_Collector.
      */
-    private function detect_fake_plugins(&$result) {
-        return;
+    public function public_detect_suspicious_files() {
+        return $this->detect_suspicious_files();
     }
 
     // =========================================================================
@@ -302,6 +320,13 @@ class LSM_Security_Scanner {
         }
 
         return $result;
+    }
+
+    /**
+     * Public wrapper around audit_permissions() for use by LSM_Scan_Collector.
+     */
+    public function public_audit_permissions() {
+        return $this->audit_permissions();
     }
 
     // =========================================================================

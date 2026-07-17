@@ -148,25 +148,55 @@ class LSM_Scan_Collector {
 
     /**
      * Collect .htaccess file contents for tampering checks.
-     * Placeholder — implemented in Task 11.
      */
     private function collect_htaccess() {
-        return [];
+        $files = [];
+        $found = [];
+        $search = [ABSPATH, WP_CONTENT_DIR];
+        foreach ($search as $dir) {
+            $this->find_htaccess($dir, $found, 5, 0);
+        }
+        $out = [];
+        foreach (array_unique($found) as $file) {
+            if (@filesize($file) > 65536) continue;
+            $content = @file_get_contents($file);
+            if ($content === false) continue;
+            $out[] = ['path' => str_replace(ABSPATH, '', $file), 'content_b64' => base64_encode($content)];
+        }
+        return $out;
     }
 
     /**
-     * Collect suspicious file metadata (e.g. recently modified, unexpected locations).
-     * Placeholder — implemented in Task 11.
+     * Recursively locate .htaccess files up to $max_depth, skipping VCS/vendor dirs.
+     */
+    private function find_htaccess($dir, &$files, $max_depth, $depth) {
+        if ($depth > $max_depth || !is_dir($dir)) return;
+        $ht = $dir . '/.htaccess';
+        if (file_exists($ht)) $files[] = $ht;
+        foreach (@glob($dir . '/*', GLOB_ONLYDIR | GLOB_NOSORT) ?: [] as $sub) {
+            $base = basename($sub);
+            if (in_array($base, ['.git', '.svn', 'node_modules', '.hg'], true)) continue;
+            $this->find_htaccess($sub, $files, $max_depth, $depth + 1);
+        }
+    }
+
+    /**
+     * Collect suspicious file metadata (PHP in uploads, double extensions, hidden PHP,
+     * recently-modified core, PHP-in-images, plugin dir listing). Classification of
+     * ambiguous findings (e.g. fake plugins) is deferred to the server.
      */
     private function collect_suspicious_files() {
-        return [];
+        $scanner = new LSM_Security_Scanner();
+        $result = $scanner->public_detect_suspicious_files();
+        return $result['findings'] ?? [];
     }
 
     /**
      * Collect file/directory permission info for hardening checks.
-     * Placeholder — implemented in Task 11.
      */
     private function collect_permissions() {
-        return [];
+        $scanner = new LSM_Security_Scanner();
+        $result = $scanner->public_audit_permissions();
+        return $result['findings'] ?? [];
     }
 }
