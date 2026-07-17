@@ -477,6 +477,7 @@ final class Landeseiten_Maintenance {
                 'attachShot'      => __('Attach screenshot', 'landeseiten-maintenance'),
                 'removeShot'      => __('Remove screenshot', 'landeseiten-maintenance'),
                 'annotateHint'    => __('Highlight the problem: draw, circle or add text, then attach.', 'landeseiten-maintenance'),
+                'toolCrop'        => __('Crop', 'landeseiten-maintenance'),
                 'toolRect'        => __('Rectangle', 'landeseiten-maintenance'),
                 'toolPen'         => __('Pen', 'landeseiten-maintenance'),
                 'toolText'        => __('Text', 'landeseiten-maintenance'),

@@ -108,7 +108,8 @@ class LSM_Support {
             'problem_page' => $problem_page,
         ];
 
-        $platform_result = LSM_Ticket_Client::create_ticket($ticket_fields, $this->collect_attachments());
+        $dropped = 0;
+        $platform_result = LSM_Ticket_Client::create_ticket($ticket_fields, $this->collect_attachments($dropped));
 
         if (is_wp_error($platform_result)) {
             $platform_result = $this->send_to_platform($ticket_fields + ['site_url' => $site_url]);
@@ -148,7 +149,7 @@ class LSM_Support {
                 'message' => sprintf(
                     __('Support request sent successfully! Ticket: %s', 'landeseiten-maintenance'),
                     $platform_result['ticket_number']
-                ),
+                ) . $this->dropped_notice($dropped),
                 'ticket_number' => $platform_result['ticket_number'],
             ]);
         } else {
@@ -267,7 +268,9 @@ class LSM_Support {
      *
      * @return array [['name','type','tmp_name'], ...]
      */
-    private function collect_attachments() {
+    private function collect_attachments(&$dropped = 0) {
+        $dropped = 0;
+
         if (empty($_FILES['attachments']) || !is_array($_FILES['attachments']['name'])) {
             return [];
         }
@@ -275,16 +278,34 @@ class LSM_Support {
         $allowed = ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'application/pdf'];
         $files = [];
         $count = count($_FILES['attachments']['name']);
+        $dropped = max(0, $count - 5);
 
         for ($i = 0; $i < min($count, 5); $i++) {
             if (($_FILES['attachments']['error'][$i] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+                $dropped++;
+                LSM_Logger::log('support_attachment', 'warning', [
+                    'message' => 'Attachment dropped: upload error',
+                    'error'   => $_FILES['attachments']['error'][$i] ?? null,
+                ]);
                 continue;
             }
             if (($_FILES['attachments']['size'][$i] ?? 0) > 5 * 1024 * 1024) {
+                $dropped++;
+                LSM_Logger::log('support_attachment', 'warning', [
+                    'message' => 'Attachment dropped: larger than 5 MB',
+                    'name'    => $_FILES['attachments']['name'][$i] ?? '',
+                    'size'    => $_FILES['attachments']['size'][$i] ?? 0,
+                ]);
                 continue;
             }
             $type = $_FILES['attachments']['type'][$i] ?? '';
             if (!in_array($type, $allowed, true)) {
+                $dropped++;
+                LSM_Logger::log('support_attachment', 'warning', [
+                    'message' => 'Attachment dropped: unsupported type',
+                    'name'    => $_FILES['attachments']['name'][$i] ?? '',
+                    'type'    => $type,
+                ]);
                 continue;
             }
             $files[] = [
@@ -295,6 +316,29 @@ class LSM_Support {
         }
 
         return $files;
+    }
+
+    /**
+     * User-facing warning when some attachments were not sent.
+     *
+     * @param int $dropped Number of skipped files.
+     * @return string Empty when nothing was dropped.
+     */
+    private function dropped_notice($dropped) {
+        if ($dropped < 1) {
+            return '';
+        }
+
+        return ' ' . sprintf(
+            /* translators: %d: number of skipped attachments */
+            _n(
+                '%d attachment was not sent (too large or unsupported type).',
+                '%d attachments were not sent (too large or unsupported type).',
+                $dropped,
+                'landeseiten-maintenance'
+            ),
+            $dropped
+        );
     }
 
     /**
@@ -362,16 +406,18 @@ class LSM_Support {
         }
 
         $user = wp_get_current_user();
+        $dropped = 0;
         $result = LSM_Ticket_Client::reply($id, [
             'message'     => $message,
             'author_name' => $user->display_name,
-        ], $this->collect_attachments());
+        ], $this->collect_attachments($dropped));
 
         if (is_wp_error($result)) {
             wp_send_json_error(['message' => $result->get_error_message()]);
         }
 
         delete_transient('lsm_tickets_unread');
+        $result['dropped_notice'] = $this->dropped_notice($dropped);
         wp_send_json_success($result);
     }
 

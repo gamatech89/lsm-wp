@@ -64,11 +64,41 @@
   // Emulated viewport widths for "how does it look on X" captures.
   var CAPTURE_WIDTHS = { desktop: 1920, laptop: 1366, tablet: 768, phone: 390 };
 
-  function captureScreenshot(mode, onDone) {
-    state.open = false;
-    render(); // hide the panel so it isn't in the shot
-    root.style.display = 'none'; // hide FAB too — nothing of the widget in the shot
+  // Instant, pixel-perfect capture of the current tab via the browser's
+  // native screen-capture API. Asks the user to share the tab once; any
+  // refusal/unsupported browser rejects and the caller falls back to
+  // html2canvas.
+  function nativeViewCapture() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+      return Promise.reject(new Error('unsupported'));
+    }
+    return navigator.mediaDevices.getDisplayMedia({
+      video: { displaySurface: 'browser' },
+      audio: false,
+      preferCurrentTab: true,
+      selfBrowserSurface: 'include',
+    }).then(function (stream) {
+      var video = document.createElement('video');
+      video.srcObject = stream;
+      video.muted = true;
+      return video.play().then(function () {
+        // one extra frame so the compositor settles
+        return new Promise(function (resolve) { setTimeout(resolve, 150); });
+      }).then(function () {
+        var canvas = document.createElement('canvas');
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        canvas.getContext('2d').drawImage(video, 0, 0);
+        stream.getTracks().forEach(function (t) { t.stop(); });
+        return canvas;
+      }).catch(function (e) {
+        stream.getTracks().forEach(function (t) { t.stop(); });
+        throw e;
+      });
+    });
+  }
 
+  function html2canvasCapture(mode) {
     var opts = { useCORS: true, logging: false };
     if (!mode || mode === 'view') {
       // Just what's on screen right now.
@@ -87,12 +117,41 @@
       opts.y = 0;
       opts.height = Math.min(document.body.scrollHeight, 2500);
     }
+    return window.html2canvas(document.body, opts);
+  }
 
-    setTimeout(function () {
-      window.html2canvas(document.body, opts)
-        .then(function (canvas) { root.style.display = ''; annotate(canvas, onDone); })
-        .catch(function () { root.style.display = ''; state.open = true; render(); alert(cfg.i18n.screenshotFailed); });
-    }, 250);
+  function captureScreenshot(mode, onDone) {
+    state.open = false;
+    render(); // hide the panel so it isn't in the shot
+    root.style.display = 'none'; // hide FAB too — nothing of the widget in the shot
+
+    var capture;
+    if (!mode || mode === 'view') {
+      // Native first (instant + exact pixels); html2canvas as silent fallback.
+      // The share prompt can sit unanswered forever — give up after 15s.
+      capture = new Promise(function (resolve) { setTimeout(resolve, 150); })
+        .then(function () {
+          return new Promise(function (resolve, reject) {
+            var timedOut = false;
+            var timer = setTimeout(function () { timedOut = true; reject(new Error('native-timeout')); }, 15000);
+            nativeViewCapture().then(function (canvas) {
+              clearTimeout(timer);
+              if (!timedOut) resolve(canvas); // late grab: tracks already stopped, just ignore
+            }, function (e) {
+              clearTimeout(timer);
+              reject(e);
+            });
+          });
+        })
+        .catch(function () { return html2canvasCapture('view'); });
+    } else {
+      capture = new Promise(function (resolve) { setTimeout(resolve, 250); })
+        .then(function () { return html2canvasCapture(mode); });
+    }
+
+    capture
+      .then(function (canvas) { root.style.display = ''; annotate(canvas, onDone); })
+      .catch(function () { root.style.display = ''; state.open = true; render(); alert(cfg.i18n.screenshotFailed); });
   }
 
   function annotate(canvas, onDone) {
@@ -154,12 +213,55 @@
       if (tool === 'rect') {
         ctx.putImageData(base, 0, 0);
         ctx.strokeRect(sx, sy, p.x - sx, p.y - sy);
+      } else if (tool === 'crop') {
+        // marching-ants style preview: dim everything outside the selection
+        ctx.putImageData(base, 0, 0);
+        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,.45)';
+        ctx.fillRect(0, 0, work.width, work.height);
+        ctx.clearRect(Math.min(sx, p.x), Math.min(sy, p.y), Math.abs(p.x - sx), Math.abs(p.y - sy));
+        ctx.putImageData(base, 0, 0);
+        ctx.globalCompositeOperation = 'multiply';
+        ctx.fillRect(0, 0, work.width, work.height);
+        ctx.globalCompositeOperation = 'source-over';
+        var cx = Math.min(sx, p.x), cy = Math.min(sy, p.y), cw = Math.abs(p.x - sx), ch = Math.abs(p.y - sy);
+        ctx.putImageData(base, 0, 0, cx, cy, cw, ch);
+        ctx.setLineDash([8, 6]);
+        ctx.strokeRect(cx, cy, cw, ch);
+        ctx.setLineDash([]);
+        ctx.restore();
       } else if (tool === 'pen') {
         ctx.lineTo(p.x, p.y);
         ctx.stroke();
       }
     });
-    function stopDrawing() { drawing = false; }
+    function finishCrop(e) {
+      var p = pos(e);
+      var cx = Math.round(Math.min(sx, p.x)), cy = Math.round(Math.min(sy, p.y));
+      var cw = Math.round(Math.abs(p.x - sx)), ch = Math.round(Math.abs(p.y - sy));
+      // restore the un-dimmed image before cutting
+      ctx.putImageData(base, 0, 0);
+      if (cw < 20 || ch < 20) return; // ignore accidental clicks
+      var cut = document.createElement('canvas');
+      cut.width = cw;
+      cut.height = ch;
+      cut.getContext('2d').drawImage(work, cx, cy, cw, ch, 0, 0, cw, ch);
+      work.width = cw;
+      work.height = ch;
+      ctx.drawImage(cut, 0, 0);
+      // stroke settings reset when the canvas is resized
+      ctx.strokeStyle = '#d63638';
+      ctx.fillStyle = '#d63638';
+      ctx.lineWidth = Math.max(3, work.width / 400);
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      undoStack.length = 0; // old snapshots have the wrong dimensions
+      setTool('rect');
+    }
+    function stopDrawing(e) {
+      if (drawing && tool === 'crop') finishCrop(e);
+      drawing = false;
+    }
     document.addEventListener('mouseup', stopDrawing);
 
     var hint = el('div', { text: cfg.i18n.annotateHint });
@@ -174,6 +276,7 @@
       });
     }
     var tools = el('div', { class: 'lsm-tw-tools' }, [
+      toolButtons.crop = el('button', { class: 'lsm-tw-tool', text: '✂ ' + cfg.i18n.toolCrop, onclick: function () { setTool('crop'); } }),
       toolButtons.rect = el('button', { class: 'lsm-tw-tool active', text: '▭ ' + cfg.i18n.toolRect, onclick: function () { setTool('rect'); } }),
       toolButtons.pen = el('button', { class: 'lsm-tw-tool', text: '✏️ ' + cfg.i18n.toolPen, onclick: function () { setTool('pen'); } }),
       toolButtons.text = el('button', { class: 'lsm-tw-tool', text: 'T ' + cfg.i18n.toolText, onclick: function () { setTool('text'); } }),
@@ -185,12 +288,22 @@
 
     var buttons = el('div', {}, [
       el('button', { class: 'lsm-tw-btn', text: cfg.i18n.attachShot, onclick: function () {
-        work.toBlob(function (blob) {
+        // Downscale + JPEG so retina/full-page captures stay well under the
+        // 5 MB attachment limit (a raw PNG of a large screen easily exceeds it).
+        var MAX_W = 2000;
+        var out = work;
+        if (work.width > MAX_W) {
+          out = document.createElement('canvas');
+          out.width = MAX_W;
+          out.height = Math.round(work.height * (MAX_W / work.width));
+          out.getContext('2d').drawImage(work, 0, 0, out.width, out.height);
+        }
+        out.toBlob(function (blob) {
           document.removeEventListener('mouseup', stopDrawing);
           document.body.removeChild(overlay);
           state.open = true;
           onDone(blob);
-        }, 'image/png');
+        }, 'image/jpeg', 0.85);
       } }),
       el('button', { class: 'lsm-tw-btn lsm-tw-btn-secondary', text: cfg.i18n.cancel, onclick: function () {
         document.removeEventListener('mouseup', stopDrawing);
@@ -261,7 +374,7 @@
 
       var files = Array.prototype.slice.call(fileInput.files, 0, 5);
       if (state.screenshotBlob) {
-        files.unshift(new File([state.screenshotBlob], 'page-screenshot.png', { type: 'image/png' }));
+        files.unshift(new File([state.screenshotBlob], 'page-screenshot.jpg', { type: 'image/jpeg' }));
       }
       files.slice(0, 5).forEach(function (f) { fd.append('attachments[]', f, f.name); });
 
@@ -376,7 +489,10 @@
       if (!reply.value.trim()) return;
       send.disabled = true;
       ajax('lsm_ticket_reply', { id: t.id, message: reply.value }, Array.prototype.slice.call(replyFiles.files, 0, 5))
-        .then(function () { openDetail(t.id); })
+        .then(function (data) {
+          if (data && data.dropped_notice) alert(data.dropped_notice);
+          openDetail(t.id);
+        })
         .catch(function (e) { err.textContent = e.message; send.disabled = false; });
     } });
 
