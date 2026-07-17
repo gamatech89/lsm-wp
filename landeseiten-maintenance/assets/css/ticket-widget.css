@@ -45,10 +45,20 @@
 .lsm-tw-msg .lsm-tw-msg-author { font-size: 11px; color: #646970; margin-bottom: 4px; }
 .lsm-tw-attachment { display: inline-block; font-size: 12px; margin-top: 6px; color: var(--lsm-accent); text-decoration: underline; cursor: pointer; }
 .lsm-tw-shot-preview { max-width: 100%; border: 1px solid #dcdcde; border-radius: 6px; margin-top: 8px; }
+.lsm-tw-capture-row { display: flex; gap: 8px; align-items: stretch; margin-top: 4px; }
+.lsm-tw-capture-row select { flex: 1; }
+.lsm-tw-capture-row .lsm-tw-btn { margin-top: 0; white-space: nowrap; }
 .lsm-tw-annotate-overlay {
+  --lsm-accent: #2271b1; /* overlay mounts on <body>, outside the widget root that defines this */
   position: fixed; inset: 0; z-index: 100000; background: rgba(0,0,0,.75);
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
 }
+.lsm-tw-tools { display: flex; gap: 6px; }
+.lsm-tw-tool {
+  background: rgba(255,255,255,.15); color: #fff; border: 1px solid rgba(255,255,255,.4);
+  border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 13px;
+}
+.lsm-tw-tool.active { background: #fff; color: #1d2327; border-color: #fff; font-weight: 600; }
 .lsm-tw-annotate-overlay canvas { max-width: 92vw; max-height: 78vh; cursor: crosshair; background: #fff; box-shadow: 0 0 0 2px #fff; }
 .lsm-tw-error { color: #d63638; margin-top: 8px; }
 .lsm-tw-success { color: #1e5c33; margin-top: 8px; }

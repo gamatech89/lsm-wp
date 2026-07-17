@@ -61,12 +61,35 @@
 
   // ---------- screenshot capture + annotation ----------
 
-  function captureScreenshot(onDone) {
+  // Emulated viewport widths for "how does it look on X" captures.
+  var CAPTURE_WIDTHS = { desktop: 1920, laptop: 1366, tablet: 768, phone: 390 };
+
+  function captureScreenshot(mode, onDone) {
     state.open = false;
     render(); // hide the panel so it isn't in the shot
     root.style.display = 'none'; // hide FAB too — nothing of the widget in the shot
+
+    var opts = { useCORS: true, logging: false };
+    if (!mode || mode === 'view') {
+      // Just what's on screen right now.
+      opts.x = window.scrollX;
+      opts.y = window.scrollY;
+      opts.width = window.innerWidth;
+      opts.height = window.innerHeight;
+      opts.windowWidth = window.innerWidth;
+    } else {
+      // Page re-rendered at the emulated device width (media queries apply).
+      // Height is capped so long landing pages stay annotatable and under
+      // the attachment size limit.
+      opts.windowWidth = CAPTURE_WIDTHS[mode];
+      opts.width = CAPTURE_WIDTHS[mode];
+      opts.x = 0;
+      opts.y = 0;
+      opts.height = Math.min(document.body.scrollHeight, 2500);
+    }
+
     setTimeout(function () {
-      window.html2canvas(document.body, { useCORS: true, logging: false, windowWidth: window.innerWidth })
+      window.html2canvas(document.body, opts)
         .then(function (canvas) { root.style.display = ''; annotate(canvas, onDone); })
         .catch(function () { root.style.display = ''; state.open = true; render(); alert(cfg.i18n.screenshotFailed); });
     }, 250);
@@ -80,7 +103,20 @@
     var ctx = work.getContext('2d');
     ctx.drawImage(canvas, 0, 0);
 
+    var tool = 'rect'; // 'rect' | 'pen' | 'text'
     var drawing = false, sx = 0, sy = 0, base = null;
+    var undoStack = [];
+
+    ctx.strokeStyle = '#d63638';
+    ctx.fillStyle = '#d63638';
+    ctx.lineWidth = Math.max(3, work.width / 400);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    function snapshot() {
+      if (undoStack.length >= 15) undoStack.shift();
+      undoStack.push(ctx.getImageData(0, 0, work.width, work.height));
+    }
 
     function pos(e) {
       var r = work.getBoundingClientRect();
@@ -91,23 +127,61 @@
     }
 
     work.addEventListener('mousedown', function (e) {
+      var p = pos(e);
+
+      if (tool === 'text') {
+        var t = window.prompt(cfg.i18n.textPrompt);
+        if (t) {
+          snapshot();
+          ctx.font = 'bold ' + Math.max(16, Math.round(work.width / 40)) + 'px sans-serif';
+          ctx.fillText(t, p.x, p.y);
+        }
+        return;
+      }
+
       drawing = true;
-      var p = pos(e); sx = p.x; sy = p.y;
+      sx = p.x; sy = p.y;
+      snapshot();
       base = ctx.getImageData(0, 0, work.width, work.height);
+      if (tool === 'pen') {
+        ctx.beginPath();
+        ctx.moveTo(p.x, p.y);
+      }
     });
     work.addEventListener('mousemove', function (e) {
       if (!drawing) return;
       var p = pos(e);
-      ctx.putImageData(base, 0, 0);
-      ctx.strokeStyle = '#d63638';
-      ctx.lineWidth = Math.max(3, work.width / 400);
-      ctx.strokeRect(sx, sy, p.x - sx, p.y - sy);
+      if (tool === 'rect') {
+        ctx.putImageData(base, 0, 0);
+        ctx.strokeRect(sx, sy, p.x - sx, p.y - sy);
+      } else if (tool === 'pen') {
+        ctx.lineTo(p.x, p.y);
+        ctx.stroke();
+      }
     });
     function stopDrawing() { drawing = false; }
     document.addEventListener('mouseup', stopDrawing);
 
     var hint = el('div', { text: cfg.i18n.annotateHint });
     hint.style.color = '#fff';
+
+    // Tool switcher: rectangle / pen / text / undo
+    var toolButtons = {};
+    function setTool(next) {
+      tool = next;
+      Object.keys(toolButtons).forEach(function (k) {
+        toolButtons[k].className = 'lsm-tw-tool' + (k === next ? ' active' : '');
+      });
+    }
+    var tools = el('div', { class: 'lsm-tw-tools' }, [
+      toolButtons.rect = el('button', { class: 'lsm-tw-tool active', text: '▭ ' + cfg.i18n.toolRect, onclick: function () { setTool('rect'); } }),
+      toolButtons.pen = el('button', { class: 'lsm-tw-tool', text: '✏️ ' + cfg.i18n.toolPen, onclick: function () { setTool('pen'); } }),
+      toolButtons.text = el('button', { class: 'lsm-tw-tool', text: 'T ' + cfg.i18n.toolText, onclick: function () { setTool('text'); } }),
+      el('button', { class: 'lsm-tw-tool', text: '↩ ' + cfg.i18n.undo, onclick: function () {
+        var prev = undoStack.pop();
+        if (prev) ctx.putImageData(prev, 0, 0);
+      } }),
+    ]);
 
     var buttons = el('div', {}, [
       el('button', { class: 'lsm-tw-btn', text: cfg.i18n.attachShot, onclick: function () {
@@ -129,6 +203,7 @@
     buttons.style.gap = '8px';
 
     overlay.appendChild(hint);
+    overlay.appendChild(tools);
     overlay.appendChild(work);
     overlay.appendChild(buttons);
     document.body.appendChild(overlay);
@@ -204,15 +279,30 @@
         .finally(function () { submit.disabled = false; render(); });
     } });
 
+    // Screenshot: what to capture (current view by default, or the page
+    // re-rendered at a device width) + the capture button.
+    var modeSel = el('select', {}, [
+      el('option', { value: 'view', text: cfg.i18n.modeView }),
+      el('option', { value: 'desktop', text: cfg.i18n.modeDesktop }),
+      el('option', { value: 'laptop', text: cfg.i18n.modeLaptop }),
+      el('option', { value: 'tablet', text: cfg.i18n.modeTablet }),
+      el('option', { value: 'phone', text: cfg.i18n.modePhone }),
+    ]);
+    var captureRow = el('div', { class: 'lsm-tw-capture-row' }, [
+      modeSel,
+      el('button', { class: 'lsm-tw-btn lsm-tw-btn-secondary', text: '📸 ' + cfg.i18n.captureShot, onclick: function () {
+        captureScreenshot(modeSel.value, function (blob) { state.screenshotBlob = blob; render(); });
+      } }),
+    ]);
+
     body.appendChild(el('label', { text: cfg.i18n.type }));
     body.appendChild(typeSel);
     body.appendChild(el('label', { text: cfg.i18n.subject }));
     body.appendChild(subject);
     body.appendChild(el('label', { text: cfg.i18n.message }));
     body.appendChild(message);
-    body.appendChild(el('button', { class: 'lsm-tw-btn lsm-tw-btn-secondary', text: '📸 ' + cfg.i18n.captureShot, onclick: function () {
-      captureScreenshot(function (blob) { state.screenshotBlob = blob; render(); });
-    } }));
+    body.appendChild(el('label', { text: cfg.i18n.screenshot }));
+    body.appendChild(captureRow);
     body.appendChild(shotInfo);
     body.appendChild(el('label', { text: cfg.i18n.attachments }));
     body.appendChild(fileInput);
