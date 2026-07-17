@@ -79,6 +79,7 @@ final class Landeseiten_Maintenance {
         require_once LSM_PLUGIN_DIR . 'includes/class-lsm-backup.php';
         require_once LSM_PLUGIN_DIR . 'includes/class-lsm-php-errors.php';
         require_once LSM_PLUGIN_DIR . 'includes/class-lsm-security-scanner.php';
+        require_once LSM_PLUGIN_DIR . 'includes/class-lsm-scan-collector.php';
         require_once LSM_PLUGIN_DIR . 'includes/class-lsm-media.php';
         require_once LSM_PLUGIN_DIR . 'includes/class-lsm-updater.php';
 

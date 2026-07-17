@@ -396,6 +396,13 @@ class LSM_Security_Scanner {
     }
 
     /**
+     * Public wrapper around get_scannable_files() for use by LSM_Scan_Collector.
+     */
+    public function public_scannable_files($dir) {
+        return $this->get_scannable_files($dir);
+    }
+
+    /**
      * Get all scannable files in a directory, recursively.
      */
     private function get_scannable_files($dir) {
