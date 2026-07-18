@@ -80,11 +80,15 @@ class LSM_Scan_Data_Collector {
 
     private function suspicious_option_rows($wpdb) {
         // Return option names + previews that CONTAIN the tokens; classification is server-side.
+        // Exclude our own plugin's options (lsm_*): e.g. lsm_php_errors stores captured
+        // PHP error text that legitimately contains these tokens, which would otherwise
+        // make the scanner flag its own companion plugin.
         $rows = $wpdb->get_results(
             "SELECT option_name, LEFT(option_value, 200) AS preview
              FROM {$wpdb->options}
              WHERE (option_value LIKE '%eval(%' OR option_value LIKE '%base64_decode%' OR option_value LIKE '%gzinflate(%')
              AND option_name NOT IN ('active_plugins','uninstall_plugins','rewrite_rules')
+             AND option_name NOT LIKE 'lsm\_%'
              LIMIT 30"
         );
         $out = [];
