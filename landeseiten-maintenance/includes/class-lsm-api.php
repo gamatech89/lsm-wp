@@ -2224,20 +2224,15 @@ PHP;
         }
         @ini_set('memory_limit', '256M');
 
-        $modules = $request->get_param('modules');
-        if ($modules && is_string($modules)) {
-            $modules = explode(',', $modules);
-            $modules = array_map('trim', $modules);
-        }
+        $modules = ['__scan_id' => (int) ($request->get_param('scan_id') ?: 0)];
+        $collector = new LSM_Scan_Collector();
+        $results = $collector->run($modules, $scan_type);
 
-        $scanner = new LSM_Security_Scanner();
-        $results = $scanner->run($modules, $scan_type);
-
-        LSM_Logger::log('security_scan_completed', $results['summary']['clean'] ? 'success' : 'warning', [
+        LSM_Logger::log('security_scan_completed', ($results['summary']['clean'] ?? true) ? 'success' : 'warning', [
             'scan_type' => $scan_type,
-            'status'   => $results['status'],
-            'threats'  => $results['summary']['threats_found'],
-            'warnings' => $results['summary']['warnings_found'],
+            'status'   => $results['status'] ?? 'unknown',
+            'threats'  => $results['summary']['threats_found'] ?? 0,
+            'warnings' => $results['summary']['warnings_found'] ?? 0,
             'duration' => $results['duration_seconds'],
         ]);
 
@@ -2259,8 +2254,8 @@ PHP;
             @set_time_limit(60);
         }
 
-        $scanner = new LSM_Security_Scanner();
-        $results = $scanner->run(null, 'quick');
+        $collector = new LSM_Scan_Collector();
+        $results = $collector->run(['__scan_id' => (int) ($request->get_param('scan_id') ?: 0)], 'quick');
 
         return rest_ensure_response([
             'success' => true,
