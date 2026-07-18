@@ -102,6 +102,19 @@ class LSM_Security_Scanner {
     private $scan_type = 'full';
     private $scan_id = null;
 
+    /**
+     * Start the elapsed-time clock as soon as the scanner is instantiated.
+     *
+     * The collector creates fresh instances purely for their collection
+     * helpers (get_scannable_files, detect_suspicious_files, audit_permissions),
+     * all of which gate on is_timed_out(). Without this, $start_time is null,
+     * is_timed_out() sees microtime(true) - null as billions of seconds and
+     * short-circuits on its first call, so enumeration returns nothing.
+     */
+    public function __construct() {
+        $this->start_time = microtime(true);
+    }
+
     // =========================================================================
     // MODULE 3: Suspicious File Detection
     // =========================================================================
