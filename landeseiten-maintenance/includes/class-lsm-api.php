@@ -2233,7 +2233,7 @@ PHP;
             'status'   => $results['status'] ?? 'unknown',
             'threats'  => $results['summary']['threats_found'] ?? 0,
             'warnings' => $results['summary']['warnings_found'] ?? 0,
-            'duration' => $results['duration_seconds'],
+            'duration' => $results['duration_seconds'] ?? 0,
         ]);
 
         return rest_ensure_response([
