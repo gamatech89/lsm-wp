@@ -563,6 +563,11 @@ class LSM_Security_Scanner {
         $core_dirs = [ABSPATH . 'wp-admin/', ABSPATH . 'wp-includes/'];
         $two_days_ago = time() - 2 * DAY_IN_SECONDS;
 
+        // Summarise rather than emitting one finding per file: a fresh install or a
+        // WordPress core update legitimately touches every core file, which would
+        // otherwise flood the report with thousands of warnings.
+        $recent = 0;
+        $examples = [];
         foreach ($core_dirs as $dir) {
             if (!is_dir($dir)) continue;
 
@@ -577,16 +582,32 @@ class LSM_Security_Scanner {
                 $count++;
 
                 if ($file->getMTime() > $two_days_ago) {
-                    $result['findings'][] = [
-                        'file' => str_replace(ABSPATH, '', $file->getPathname()),
-                        'reason' => 'Core file modified within last 48 hours',
-                        'severity' => 'medium',
-                        'modified_at' => gmdate('c', $file->getMTime()),
-                        'size' => $file->getSize(),
-                    ];
+                    $recent++;
+                    if (count($examples) < 10) {
+                        $examples[] = str_replace(ABSPATH, '', $file->getPathname());
+                    }
                 }
             }
         }
+
+        if ($recent === 0) return;
+
+        // A large number of recently-modified core files almost always means a legit
+        // WordPress update — surface it as informational, not a warning. A small number
+        // is more consistent with a targeted injection, so keep that at 'medium'.
+        $is_bulk = $recent > 100;
+        $result['findings'][] = [
+            'type' => 'recently_modified_core',
+            'reason' => sprintf(
+                '%d core file%s modified within the last 48 hours%s',
+                $recent,
+                $recent === 1 ? '' : 's',
+                $is_bulk ? ' — likely a recent WordPress core update' : ' — verify this matches a known update'
+            ),
+            'severity' => $is_bulk ? 'info' : 'medium',
+            'count' => $recent,
+            'examples' => $examples,
+        ];
     }
 
     /**
