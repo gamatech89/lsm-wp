@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Landeseiten Maintenance
  * Description: Remote site management, SSO login, health monitoring, security scanning, and client support for Landeseiten managed WordPress sites.
- * Version: 2.7.1
+ * Version: 2.8.0
  * Author: Landeseiten GmbH
  * Author URI: https://landeseiten.at
  * License: GPL-2.0+
@@ -19,7 +19,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Plugin constants
-define('LSM_VERSION', '2.7.1');
+define('LSM_VERSION', '2.8.0');
 define('LSM_PLUGIN_FILE', __FILE__);
 define('LSM_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('LSM_PLUGIN_URL', plugin_dir_url(__FILE__));
@@ -79,6 +79,8 @@ final class Landeseiten_Maintenance {
         require_once LSM_PLUGIN_DIR . 'includes/class-lsm-backup.php';
         require_once LSM_PLUGIN_DIR . 'includes/class-lsm-php-errors.php';
         require_once LSM_PLUGIN_DIR . 'includes/class-lsm-security-scanner.php';
+        require_once LSM_PLUGIN_DIR . 'includes/class-lsm-scan-collector.php';
+        require_once LSM_PLUGIN_DIR . 'includes/class-lsm-scan-data-collector.php';
         require_once LSM_PLUGIN_DIR . 'includes/class-lsm-media.php';
         require_once LSM_PLUGIN_DIR . 'includes/class-lsm-updater.php';
 
