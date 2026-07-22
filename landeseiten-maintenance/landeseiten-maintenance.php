@@ -19,7 +19,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Plugin constants
-define('LSM_VERSION', '2.9.0');
+define('LSM_VERSION', '2.9.1');
 define('LSM_PLUGIN_FILE', __FILE__);
 define('LSM_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('LSM_PLUGIN_URL', plugin_dir_url(__FILE__));
