@@ -465,6 +465,13 @@ final class Landeseiten_Maintenance {
             'userName'     => $user->display_name,
             'siteUrl'      => get_site_url(),
             'pageUrl'      => home_url(add_query_arg([])),
+            'types' => array_map(
+                function ($code, $t) {
+                    return ['code' => $code, 'label' => $t['label'], 'icon' => LSM_Ticket_Types::icon($t['icon'])];
+                },
+                array_keys(LSM_Ticket_Types::types()),
+                array_values(LSM_Ticket_Types::types())
+            ),
             'i18n'         => [
                 'title'           => __('Support', 'landeseiten-maintenance'),
                 'newTicket'       => __('New Ticket', 'landeseiten-maintenance'),
@@ -501,14 +508,6 @@ final class Landeseiten_Maintenance {
                 'originalMessage' => __('Original request', 'landeseiten-maintenance'),
                 'fillRequired'    => __('Please fill in subject and message.', 'landeseiten-maintenance'),
                 'genericError'    => __('Something went wrong. Please try again.', 'landeseiten-maintenance'),
-                'types'           => [
-                    'bug'      => __('🐛 Bug / Error', 'landeseiten-maintenance'),
-                    'content'  => __('📝 Content Change', 'landeseiten-maintenance'),
-                    'design'   => __('🎨 Design Change', 'landeseiten-maintenance'),
-                    'feature'  => __('✨ New Feature', 'landeseiten-maintenance'),
-                    'question' => __('❓ Question', 'landeseiten-maintenance'),
-                    'urgent'   => __('🚨 URGENT', 'landeseiten-maintenance'),
-                ],
             ],
         ]);
     }

@@ -17,7 +17,7 @@
     tickets: [],
     ticket: null,          // detail payload
     screenshotBlob: null,
-    draft: { type: 'bug', subject: '', message: '' }, // survives re-renders (e.g. screenshot capture)
+    draft: { type: 'bug', subject: '', message: '', priority: 'normal' }, // survives re-renders (e.g. screenshot capture)
     busy: false,
   };
 
@@ -345,11 +345,29 @@
     }
     refreshShotInfo();
 
-    var typeSel = el('select', { onchange: function () { state.draft.type = typeSel.value; } },
-      ['bug', 'content', 'design', 'feature', 'question', 'urgent'].map(function (t) {
-        return el('option', { value: t, text: cfg.i18n.types[t] || t });
-      }));
-    typeSel.value = state.draft.type;
+    // Type picker — icon cards (accessible radiogroup)
+    var typeGrid = el('div', { class: 'lsm-tc-grid lsm-ticket-ui', role: 'radiogroup', 'aria-label': cfg.i18n.type });
+    (cfg.types || []).forEach(function (t) {
+      var card = el('button', {
+        type: 'button',
+        class: 'lsm-tc-card' + (state.draft.type === t.code ? ' selected' : ''),
+        role: 'radio',
+        'aria-checked': state.draft.type === t.code ? 'true' : 'false',
+        onclick: function () {
+          state.draft.type = t.code;
+          Array.prototype.forEach.call(typeGrid.querySelectorAll('.lsm-tc-card'), function (c) {
+            var on = c === card;
+            c.classList.toggle('selected', on);
+            c.setAttribute('aria-checked', on ? 'true' : 'false');
+          });
+        },
+      });
+      var ic = el('span', { class: 'lsm-tc-ic' });
+      ic.innerHTML = t.icon; // static trusted SVG shipped by the plugin
+      card.appendChild(ic);
+      card.appendChild(el('span', { class: 'lsm-tc-label', text: t.label }));
+      typeGrid.appendChild(card);
+    });
     var subject = el('input', { type: 'text', maxlength: '255', oninput: function () { state.draft.subject = subject.value; } });
     subject.value = state.draft.subject;
     var message = el('textarea', { rows: '4', oninput: function () { state.draft.message = message.value; } });
@@ -367,7 +385,7 @@
       var fd = new FormData();
       fd.append('action', 'lsm_submit_support');
       fd.append('lsm_nonce', cfg.supportNonce);
-      fd.append('issue_type', typeSel.value);
+      fd.append('issue_type', state.draft.type);
       fd.append('subject', subject.value);
       fd.append('message', message.value);
       fd.append('user_email', cfg.userEmail);
@@ -386,7 +404,7 @@
         .then(function (json) {
           if (!json.success) throw new Error((json.data && json.data.message) || cfg.i18n.genericError);
           state.screenshotBlob = null;
-          state.draft = { type: 'bug', subject: '', message: '' };
+          state.draft = { type: 'bug', subject: '', message: '', priority: 'normal' };
           state.tab = 'list';
           loadList();
           alert((json.data && json.data.message) || cfg.i18n.sent);
@@ -412,7 +430,7 @@
     ]);
 
     body.appendChild(el('label', { text: cfg.i18n.type }));
-    body.appendChild(typeSel);
+    body.appendChild(typeGrid);
     body.appendChild(el('label', { text: cfg.i18n.subject }));
     body.appendChild(subject);
     body.appendChild(el('label', { text: cfg.i18n.message }));
