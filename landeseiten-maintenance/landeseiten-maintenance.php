@@ -74,6 +74,7 @@ final class Landeseiten_Maintenance {
         require_once LSM_PLUGIN_DIR . 'includes/class-lsm-actions.php';
         require_once LSM_PLUGIN_DIR . 'includes/class-lsm-api.php';
         require_once LSM_PLUGIN_DIR . 'includes/class-lsm-support.php';
+        require_once LSM_PLUGIN_DIR . 'includes/class-lsm-ticket-types.php';
         require_once LSM_PLUGIN_DIR . 'includes/class-lsm-ticket-client.php';
         require_once LSM_PLUGIN_DIR . 'includes/class-lsm-maintenance-mode.php';
         require_once LSM_PLUGIN_DIR . 'includes/class-lsm-backup.php';
