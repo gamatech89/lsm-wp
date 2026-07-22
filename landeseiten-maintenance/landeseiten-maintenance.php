@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Landeseiten Maintenance
  * Description: Remote site management, SSO login, health monitoring, security scanning, and client support for Landeseiten managed WordPress sites.
- * Version: 2.8.0
+ * Version: 2.9.2
  * Author: Landeseiten GmbH
  * Author URI: https://landeseiten.at
  * License: GPL-2.0+
