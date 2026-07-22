@@ -1,5 +1,5 @@
 /* LSM Ticket Widget — floating support panel (admins only) */
-#lsm-ticket-widget-root { --lsm-accent: #7C3AED; font-size: 14px; }
+#lsm-ticket-widget-root { --lsm-accent: #7C3AED; font-size: 14px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", Arial, sans-serif; }
 #lsm-ticket-widget-root .lsm-tw-fab {
   -webkit-appearance: none; appearance: none; font: inherit; margin: 0;
   box-sizing: border-box; line-height: 1;
@@ -67,6 +67,7 @@
 .lsm-tw-capture-row .lsm-tw-btn { margin-top: 0; white-space: nowrap; }
 .lsm-tw-annotate-overlay {
   --lsm-accent: #7C3AED; /* overlay mounts on <body>, outside the widget root that defines this */
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", Arial, sans-serif;
   position: fixed; inset: 0; z-index: 100000; background: rgba(0,0,0,.75);
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
 }
