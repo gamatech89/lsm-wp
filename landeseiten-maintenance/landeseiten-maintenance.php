@@ -19,7 +19,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Plugin constants
-define('LSM_VERSION', '2.8.0');
+define('LSM_VERSION', '2.9.0');
 define('LSM_PLUGIN_FILE', __FILE__);
 define('LSM_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('LSM_PLUGIN_URL', plugin_dir_url(__FILE__));
@@ -420,6 +420,8 @@ final class Landeseiten_Maintenance {
                 LSM_VERSION
             );
 
+            wp_enqueue_style('lsm-ticket-ui', LSM_PLUGIN_URL . 'assets/css/ticket-ui.css', [], LSM_VERSION);
+
             wp_enqueue_script(
                 'lsm-admin',
                 LSM_PLUGIN_URL . 'admin/js/admin.js',
@@ -449,6 +451,7 @@ final class Landeseiten_Maintenance {
             return;
         }
 
+        wp_enqueue_style('lsm-ticket-ui', LSM_PLUGIN_URL . 'assets/css/ticket-ui.css', [], LSM_VERSION);
         wp_enqueue_style('lsm-ticket-widget', LSM_PLUGIN_URL . 'assets/css/ticket-widget.css', [], LSM_VERSION);
         wp_enqueue_script('lsm-html2canvas', LSM_PLUGIN_URL . 'assets/js/vendor/html2canvas.min.js', [], '1.4.1', true);
         wp_enqueue_script('lsm-ticket-widget', LSM_PLUGIN_URL . 'assets/js/ticket-widget.js', ['lsm-html2canvas'], LSM_VERSION, true);
@@ -533,7 +536,7 @@ final class Landeseiten_Maintenance {
         }
         // Admin page: assets aren't enqueued by wp_enqueue_scripts, do it inline.
         $this->enqueue_ticket_widget();
-        wp_print_styles(['lsm-ticket-widget']);
+        wp_print_styles(['lsm-ticket-ui', 'lsm-ticket-widget']);
         wp_print_scripts(['lsm-html2canvas', 'lsm-ticket-widget']);
         echo '<div id="lsm-ticket-widget-root"></div>';
     }

@@ -1,0 +1,57 @@
+/* LSM shared ticket UI — design tokens + type-card / priority-segment components.
+   Loaded by both the flying widget and the wp-admin support form. */
+#lsm-ticket-widget-root, .lsm-ticket-ui {
+  --lsm-accent: #7C3AED;
+  --lsm-accent-soft: rgba(124, 58, 237, .08);
+  --lsm-accent-ring: rgba(124, 58, 237, .20);
+  --lsm-border: #dcdcde;
+  --lsm-text: #1d2327;
+  --lsm-muted: #646970;
+}
+
+/* ---- type cards (JS widget builds <button>; admin uses native radios) ---- */
+.lsm-tc-grid,
+.lsm-tc-radios { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 4px 0; }
+
+.lsm-tc-card {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 12px 8px; background: #fff; color: var(--lsm-text);
+  border: 1px solid var(--lsm-border); border-radius: 10px; cursor: pointer;
+  font: inherit; text-align: center;
+  transition: border-color .12s, background .12s, box-shadow .12s;
+}
+.lsm-tc-card:hover { border-color: var(--lsm-accent); }
+.lsm-tc-card:focus-visible { outline: none; border-color: var(--lsm-accent); box-shadow: 0 0 0 4px var(--lsm-accent-ring); }
+.lsm-tc-card.selected { border-color: var(--lsm-accent); background: var(--lsm-accent-soft); box-shadow: inset 0 0 0 1px var(--lsm-accent); }
+
+.lsm-tc-ic { color: var(--lsm-muted); line-height: 0; }
+.lsm-tc-ic svg { width: 22px; height: 22px; display: block; }
+.lsm-tc-card.selected .lsm-tc-ic { color: var(--lsm-accent); }
+.lsm-tc-label { font-size: 12px; font-weight: 600; line-height: 1.2; }
+@media (max-width: 360px) { .lsm-tc-grid, .lsm-tc-radios { grid-template-columns: repeat(2, 1fr); } }
+
+/* native-radio card variant (admin form, no JS) */
+.lsm-tc-radio { position: relative; }
+.lsm-tc-radio input { position: absolute; inset: 0; margin: 0; opacity: 0; cursor: pointer; }
+.lsm-tc-radio > span {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 12px 8px; background: #fff; border: 1px solid var(--lsm-border);
+  border-radius: 10px; text-align: center;
+}
+.lsm-tc-radio input:hover + span { border-color: var(--lsm-accent); }
+.lsm-tc-radio input:focus-visible + span { border-color: var(--lsm-accent); box-shadow: 0 0 0 4px var(--lsm-accent-ring); }
+.lsm-tc-radio input:checked + span { border-color: var(--lsm-accent); background: var(--lsm-accent-soft); box-shadow: inset 0 0 0 1px var(--lsm-accent); }
+.lsm-tc-radio input:checked + span .lsm-tc-ic { color: var(--lsm-accent); }
+
+/* ---- priority segmented control ---- */
+.lsm-tc-seg { display: inline-flex; gap: 4px; padding: 3px; background: #f0f0f1; border-radius: 10px; }
+.lsm-tc-seg-opt, .lsm-tc-seg-radio > span {
+  border: 0; background: transparent; color: var(--lsm-muted);
+  font: inherit; font-weight: 600; font-size: 13px;
+  padding: 6px 14px; border-radius: 8px; cursor: pointer; display: block;
+}
+.lsm-tc-seg-opt:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--lsm-accent-ring); }
+.lsm-tc-seg-opt.selected { background: #fff; color: var(--lsm-accent); box-shadow: 0 1px 2px rgba(0, 0, 0, .12); }
+.lsm-tc-seg-radio { position: relative; }
+.lsm-tc-seg-radio input { position: absolute; inset: 0; margin: 0; opacity: 0; cursor: pointer; }
+.lsm-tc-seg-radio input:checked + span { background: #fff; color: var(--lsm-accent); box-shadow: 0 1px 2px rgba(0, 0, 0, .12); }
