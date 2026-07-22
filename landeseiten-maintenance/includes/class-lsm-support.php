@@ -44,6 +44,11 @@ class LSM_Support {
         $problem_page = esc_url_raw($_POST['problem_page'] ?? '');
         $site_url = esc_url_raw($_POST['site_url'] ?? '');
 
+        $priority = sanitize_text_field($_POST['priority'] ?? LSM_Ticket_Types::default_priority());
+        if (!array_key_exists($priority, LSM_Ticket_Types::priorities())) {
+            $priority = LSM_Ticket_Types::default_priority();
+        }
+
         if (empty($subject) || empty($message) || empty($issue_type)) {
             wp_send_json_error(['message' => __('Please fill in all required fields.', 'landeseiten-maintenance')]);
         }
@@ -53,19 +58,10 @@ class LSM_Support {
         $support_email = $settings['support_email'] ?? get_option('admin_email');
 
         // Build email
-        $issue_labels = [
-            'bug'     => '🐛 Bug / Error',
-            'content' => '📝 Content Change',
-            'design'  => '🎨 Design Change',
-            'feature' => '✨ New Feature',
-            'question'=> '❓ Question',
-            'urgent'  => '🚨 URGENT',
-        ];
-
         $email_subject = sprintf(
             '[%s] %s: %s',
             parse_url($site_url, PHP_URL_HOST),
-            $issue_labels[$issue_type] ?? $issue_type,
+            LSM_Ticket_Types::type_label($issue_type),
             $subject
         );
 
@@ -85,7 +81,7 @@ class LSM_Support {
             "PHP: %s\n" .
             "Theme: %s\n",
             $site_url,
-            $issue_labels[$issue_type] ?? $issue_type,
+            LSM_Ticket_Types::type_label($issue_type),
             $subject,
             $user_name,
             $user_email,
@@ -106,6 +102,7 @@ class LSM_Support {
             'client_email' => $user_email,
             'client_name'  => $user_name,
             'problem_page' => $problem_page,
+            'reported_priority' => $priority,
         ];
 
         $dropped = 0;
@@ -120,6 +117,7 @@ class LSM_Support {
         // Store in local database
         $this->store_request([
             'type'       => $issue_type,
+            'priority'   => $priority,
             'subject'    => $subject,
             'message'    => $message,
             'user_email' => $user_email,

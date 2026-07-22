@@ -472,11 +472,18 @@ final class Landeseiten_Maintenance {
                 array_keys(LSM_Ticket_Types::types()),
                 array_values(LSM_Ticket_Types::types())
             ),
+            'priorities' => array_map(
+                function ($code, $p) { return ['code' => $code, 'label' => $p['label']]; },
+                array_keys(LSM_Ticket_Types::priorities()),
+                array_values(LSM_Ticket_Types::priorities())
+            ),
+            'defaultPriority' => LSM_Ticket_Types::default_priority(),
             'i18n'         => [
                 'title'           => __('Support', 'landeseiten-maintenance'),
                 'newTicket'       => __('New Ticket', 'landeseiten-maintenance'),
                 'myTickets'       => __('My Tickets', 'landeseiten-maintenance'),
                 'type'            => __('Type', 'landeseiten-maintenance'),
+                'priority'        => __('Priority', 'landeseiten-maintenance'),
                 'subject'         => __('Subject', 'landeseiten-maintenance'),
                 'message'         => __('Message', 'landeseiten-maintenance'),
                 'attachments'     => __('Attachments (max 5, images/PDF)', 'landeseiten-maintenance'),

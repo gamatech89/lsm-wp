@@ -170,7 +170,7 @@ class LSM_Ticket_Client {
     /**
      * Create a ticket (with optional attachments).
      *
-     * @param array $fields type, subject, message, client_email, client_name, problem_page.
+     * @param array $fields type, subject, message, client_email, client_name, problem_page, reported_priority.
      * @param array $files  Normalized upload entries.
      * @return array|WP_Error
      */

@@ -368,6 +368,27 @@
       card.appendChild(el('span', { class: 'lsm-tc-label', text: t.label }));
       typeGrid.appendChild(card);
     });
+
+    // Priority — segmented control (accessible radiogroup)
+    var priSeg = el('div', { class: 'lsm-tc-seg lsm-ticket-ui', role: 'radiogroup', 'aria-label': cfg.i18n.priority });
+    (cfg.priorities || []).forEach(function (p) {
+      var opt = el('button', {
+        type: 'button',
+        class: 'lsm-tc-seg-opt' + (state.draft.priority === p.code ? ' selected' : ''),
+        role: 'radio',
+        'aria-checked': state.draft.priority === p.code ? 'true' : 'false',
+        text: p.label,
+        onclick: function () {
+          state.draft.priority = p.code;
+          Array.prototype.forEach.call(priSeg.querySelectorAll('.lsm-tc-seg-opt'), function (o) {
+            var on = o === opt;
+            o.classList.toggle('selected', on);
+            o.setAttribute('aria-checked', on ? 'true' : 'false');
+          });
+        },
+      });
+      priSeg.appendChild(opt);
+    });
     var subject = el('input', { type: 'text', maxlength: '255', oninput: function () { state.draft.subject = subject.value; } });
     subject.value = state.draft.subject;
     var message = el('textarea', { rows: '4', oninput: function () { state.draft.message = message.value; } });
@@ -386,6 +407,7 @@
       fd.append('action', 'lsm_submit_support');
       fd.append('lsm_nonce', cfg.supportNonce);
       fd.append('issue_type', state.draft.type);
+      fd.append('priority', state.draft.priority);
       fd.append('subject', subject.value);
       fd.append('message', message.value);
       fd.append('user_email', cfg.userEmail);
@@ -431,6 +453,8 @@
 
     body.appendChild(el('label', { text: cfg.i18n.type }));
     body.appendChild(typeGrid);
+    body.appendChild(el('label', { text: cfg.i18n.priority }));
+    body.appendChild(priSeg);
     body.appendChild(el('label', { text: cfg.i18n.subject }));
     body.appendChild(subject);
     body.appendChild(el('label', { text: cfg.i18n.message }));
