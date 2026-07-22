@@ -93,7 +93,8 @@
             // Get form data
             var formData = {
                 action: 'lsm_submit_support',
-                issue_type: $form.find('[name="issue_type"]').val(),
+                issue_type: $form.find('[name="issue_type"]:checked').val(),
+                priority: $form.find('[name="priority"]:checked').val(),
                 subject: $form.find('[name="subject"]').val(),
                 message: $form.find('[name="message"]').val(),
                 user_email: $form.find('[name="user_email"]').val(),

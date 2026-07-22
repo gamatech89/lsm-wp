@@ -260,16 +260,30 @@ class LSM_Admin {
                             
                             <form id="lsm-inline-support-form" class="lsm-support-form">
                                 <div class="lsm-form-group">
-                                    <label for="lsm-issue-type"><?php _e('Issue Type', 'landeseiten-maintenance'); ?></label>
-                                    <select id="lsm-issue-type" name="issue_type" class="lsm-input" required>
-                                        <option value=""><?php _e('Select type...', 'landeseiten-maintenance'); ?></option>
-                                        <option value="bug"><?php _e('🐛 Bug / Error', 'landeseiten-maintenance'); ?></option>
-                                        <option value="content"><?php _e('📝 Content Change', 'landeseiten-maintenance'); ?></option>
-                                        <option value="design"><?php _e('🎨 Design Change', 'landeseiten-maintenance'); ?></option>
-                                        <option value="feature"><?php _e('✨ New Feature', 'landeseiten-maintenance'); ?></option>
-                                        <option value="question"><?php _e('❓ Question', 'landeseiten-maintenance'); ?></option>
-                                        <option value="urgent"><?php _e('🚨 URGENT', 'landeseiten-maintenance'); ?></option>
-                                    </select>
+                                    <label><?php _e('Issue Type', 'landeseiten-maintenance'); ?></label>
+                                    <div class="lsm-tc-radios lsm-ticket-ui">
+                                        <?php foreach (LSM_Ticket_Types::types() as $code => $t) : ?>
+                                            <label class="lsm-tc-radio">
+                                                <input type="radio" name="issue_type" value="<?php echo esc_attr($code); ?>" required>
+                                                <span>
+                                                    <span class="lsm-tc-ic"><?php echo LSM_Ticket_Types::icon($t['icon']); // static trusted SVG ?></span>
+                                                    <span class="lsm-tc-label"><?php echo esc_html($t['label']); ?></span>
+                                                </span>
+                                            </label>
+                                        <?php endforeach; ?>
+                                    </div>
+                                </div>
+
+                                <div class="lsm-form-group">
+                                    <label><?php _e('Priority', 'landeseiten-maintenance'); ?></label>
+                                    <div class="lsm-tc-seg lsm-ticket-ui" role="radiogroup">
+                                        <?php foreach (LSM_Ticket_Types::priorities() as $code => $p) : ?>
+                                            <label class="lsm-tc-seg-radio">
+                                                <input type="radio" name="priority" value="<?php echo esc_attr($code); ?>" <?php checked($code, LSM_Ticket_Types::default_priority()); ?>>
+                                                <span><?php echo esc_html($p['label']); ?></span>
+                                            </label>
+                                        <?php endforeach; ?>
+                                    </div>
                                 </div>
 
                                 <div class="lsm-form-group">
