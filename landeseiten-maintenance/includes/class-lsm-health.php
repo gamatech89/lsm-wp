@@ -271,9 +271,11 @@ class LSM_Health {
         $uploads_path = $upload_dir['basedir'];
         $wp_path = ABSPATH;
 
-        // Use disk_free_space which is fast, instead of recursive size calculation
-        $disk_free = @disk_free_space($wp_path);
-        $disk_total = @disk_total_space($wp_path);
+        // disk_free_space()/disk_total_space() can be turned off via the host's
+        // disable_functions. Calling a disabled function raises a fatal Error that
+        // the @ operator does NOT suppress, so guard with function_exists() first.
+        $disk_free = function_exists('disk_free_space') ? @disk_free_space($wp_path) : false;
+        $disk_total = function_exists('disk_total_space') ? @disk_total_space($wp_path) : false;
         
         return [
             'uploads_path' => $uploads_path,
