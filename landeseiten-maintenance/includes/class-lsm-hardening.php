@@ -546,4 +546,226 @@ class LSM_Hardening {
         }
         return $content;
     }
+
+    // =========================================================================
+    // STATE, PREFLIGHT AND STATUS
+    // =========================================================================
+
+    /**
+     * Read the lsm_hardening option, filled up with defaults.
+     *
+     * @return array
+     */
+    public function get_state() {
+        $stored = get_option(self::OPTION, []);
+        if (!is_array($stored)) {
+            $stored = [];
+        }
+
+        $state = array_merge([
+            'rules'           => [],
+            'pause_until'     => null,
+            'last_attempt_at' => null,
+            'pending'         => null,
+            'last_result'     => null,
+            'rule_failures'   => [],
+        ], $stored);
+
+        $desired        = is_array($state['rules']) ? $state['rules'] : [];
+        $state['rules'] = [];
+        foreach (self::RULES as $rule) {
+            $state['rules'][$rule] = !empty($desired[$rule]);
+        }
+
+        $state['pause_until']   = $state['pause_until'] === null ? null : (int) $state['pause_until'];
+        $state['rule_failures'] = is_array($state['rule_failures']) ? $state['rule_failures'] : [];
+
+        return $state;
+    }
+
+    /**
+     * Static preflight: no write, no HTTP.
+     *
+     * @param string $rule Rule key.
+     * @return string|null Reason the rule is unsupported here, or null.
+     */
+    public function preflight($rule) {
+        if (is_multisite()) {
+            return 'multisite';
+        }
+
+        $edition = isset($_SERVER['LSWS_EDITION']) ? (string) $_SERVER['LSWS_EDITION'] : '';
+        if (stripos($edition, 'Openlitespeed') === 0) {
+            return 'openlitespeed';
+        }
+
+        // SERVER_SOFTWARE cannot see an nginx in front of Apache — only the probes can.
+        $software = $this->server_software();
+        if (stripos($software, 'Apache') === false && stripos($software, 'LiteSpeed') === false) {
+            return 'unknown_server';
+        }
+
+        // A file we can write but not read is as good as not writable: the candidate would be
+        // built from "empty" and the write would destroy whatever is in it.
+        $file     = $this->target_file($this->target_of($rule));
+        $writable = file_exists($file) ? (is_writable($file) && is_readable($file)) : is_writable(dirname($file));
+        if (!$writable) {
+            return 'not_writable';
+        }
+
+        return null;
+    }
+
+    /**
+     * Does the managed block contain a rule's lines (in order, whitespace-insensitive)?
+     *
+     * @param array  $block_lines Body lines from parse_markers().
+     * @param string $rule        Rule key.
+     * @return bool
+     */
+    private function block_has_rule(array $block_lines, $rule) {
+        $haystack = array_map([$this, 'normalize_line'], $block_lines);
+        $needle   = array_map([$this, 'normalize_line'], $this->rule_lines($rule));
+        $last     = count($haystack) - count($needle);
+
+        for ($i = 0; $i <= $last; $i++) {
+            if (array_slice($haystack, $i, count($needle)) === $needle) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * What a target file says right now.
+     *
+     * @param string $target 'content' or 'uploads'.
+     * @return array ['existed' => bool, 'content' => string, 'corrupt' => bool,
+     *                'in_block' => [rule => bool], 'manual' => [rule => bool]]
+     *               (plus read_target()'s 'unreadable' => true when it applies)
+     */
+    public function file_facts($target) {
+        $facts  = $this->read_target($target);
+        $parsed = $this->parse_markers($facts['content']);
+
+        // An unreadable file counts as corrupt: every writer refuses to touch a corrupt file,
+        // also the ones that skip the preflight (auto-resume, crash recovery).
+        $facts['corrupt']  = $parsed['corrupt'] || !empty($facts['unreadable']);
+        $facts['in_block'] = [];
+        $facts['manual']   = [];
+        foreach ($this->rules_of($target) as $rule) {
+            $facts['in_block'][$rule] = $parsed['found'] && $this->block_has_rule($parsed['lines'], $rule);
+            $facts['manual'][$rule]   = !empty($this->find_manual_blocks($facts['content'], $rule));
+        }
+
+        return $facts;
+    }
+
+    /**
+     * Per-rule status, computed from the files — the option only says what is desired.
+     *
+     * @return array Rule key => ['state', 'desired', 'unsupported_reason', 'last_failure'].
+     */
+    public function rule_statuses() {
+        $state = $this->get_state();
+        $facts = [
+            'content' => $this->file_facts('content'),
+            'uploads' => $this->file_facts('uploads'),
+        ];
+
+        $rules = [];
+        foreach (self::RULES as $rule) {
+            $file        = $facts[$this->target_of($rule)];
+            $unsupported = $this->preflight($rule);
+
+            if ($unsupported !== null) {
+                $name = 'unsupported';
+            } elseif ($rule === 'block_archives' && $state['pause_until'] !== null) {
+                $name = 'paused';
+            } elseif ($file['in_block'][$rule]) {
+                $name = 'on';
+            } elseif ($file['manual'][$rule]) {
+                $name = 'manual';
+            } elseif ($state['rules'][$rule]) {
+                $name = 'drift';
+            } else {
+                $name = 'off';
+            }
+
+            $rules[$rule] = [
+                'state'              => $name,
+                'desired'            => $state['rules'][$rule],
+                'unsupported_reason' => $unsupported,
+                'last_failure'       => isset($state['rule_failures'][$rule]) ? $state['rule_failures'][$rule] : null,
+            ];
+        }
+
+        return $rules;
+    }
+
+    /**
+     * Short server name for the panel.
+     *
+     * @return string
+     */
+    private function server_label() {
+        $software = $this->server_software();
+        $edition  = isset($_SERVER['LSWS_EDITION']) ? (string) $_SERVER['LSWS_EDITION'] : '';
+
+        if (stripos($edition, 'Openlitespeed') === 0) {
+            return 'OpenLiteSpeed';
+        }
+        if (stripos($software, 'LiteSpeed') !== false) {
+            return 'LiteSpeed';
+        }
+        if (stripos($software, 'Apache') !== false) {
+            return 'Apache';
+        }
+        return $software !== '' ? $software : 'unknown';
+    }
+
+    /**
+     * Media Library attachments block_archives would stop serving (one COUNT query).
+     *
+     * @return int
+     */
+    protected function count_archive_attachments() {
+        global $wpdb;
+
+        $mime_types = [
+            'application/zip',
+            'application/x-zip-compressed',
+            'application/gzip',
+            'application/x-gzip',
+            'application/x-tar',
+            'application/rar',
+            'application/x-rar-compressed',
+            'application/x-7z-compressed',
+        ];
+        $placeholders = implode(', ', array_fill(0, count($mime_types), '%s'));
+
+        return (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type = 'attachment' AND post_mime_type IN ($placeholders)",
+            $mime_types
+        ));
+    }
+
+    /**
+     * Full status object of the REST responses.
+     *
+     * @return array
+     */
+    public function get_status() {
+        $state = $this->get_state();
+
+        return [
+            'plugin_version'      => LSM_VERSION,
+            'server'              => $this->server_label(),
+            'rules'               => $this->rule_statuses(),
+            'pause_until'         => $state['pause_until'],
+            'pause_overdue'       => $state['pause_until'] !== null && $state['pause_until'] < $this->now(),
+            'archive_attachments' => $this->count_archive_attachments(),
+            'last_result'         => $state['last_result'],
+        ];
+    }
 }
