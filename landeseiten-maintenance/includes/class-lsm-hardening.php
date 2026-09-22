@@ -1784,4 +1784,55 @@ class LSM_Hardening {
             }
         }
     }
+
+    // =========================================================================
+    // DEACTIVATION
+    // =========================================================================
+
+    /**
+     * Plugin deactivation: a deactivated plugin can neither pause nor undo, so both
+     * managed blocks come out. Skips the server preflight (often run from WP-CLI,
+     * where SERVER_SOFTWARE is empty) and runs no self-test — removing deny rules
+     * cannot take a site down.
+     */
+    public function deactivate() {
+        // Take the lock if we can; deactivation goes ahead either way, there is no later.
+        $this->acquire_lock();
+
+        $removed = [];
+        foreach (['content', 'uploads'] as $target) {
+            $current  = $this->read_target($target);
+            $stripped = $this->replace_block($current['content'], '');
+            // Unreadable, corrupt markers, or no managed block: leave the file alone.
+            if (!empty($current['unreadable']) || $stripped === null || $stripped === $current['content']) {
+                continue;
+            }
+            if (!$this->commit_target($target, $stripped, $current['content'], $current['existed'])) {
+                $this->restore_target($target, $current['content'], $current['existed']);
+                continue;
+            }
+            $removed[] = $target;
+        }
+
+        $this->cleanup_artifacts();
+
+        $state = $this->get_state();
+        foreach (self::RULES as $rule) {
+            $state['rules'][$rule] = false;
+        }
+        $state['pause_until'] = null;
+        $state['pending']     = null;
+        $state['last_result'] = [
+            'at'       => $this->now(),
+            'action'   => 'deactivate',
+            'rule'     => null,
+            'ok'       => true,
+            'reason'   => null,
+            'warnings' => [],
+        ];
+        $this->save_state($state);
+        $this->release_lock();
+
+        LSM_Logger::log('hardening_deactivated', 'info', ['removed_from' => $removed]);
+    }
 }
