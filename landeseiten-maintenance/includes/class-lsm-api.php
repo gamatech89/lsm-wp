@@ -323,6 +323,31 @@ class LSM_API {
             'permission_callback' => [$this, 'authenticate'],
         ]);
 
+        // Managed .htaccess hardening
+        register_rest_route(self::NAMESPACE, '/hardening/status', [
+            'methods'             => 'GET',
+            'callback'            => [$this, 'get_hardening_status'],
+            'permission_callback' => [$this, 'authenticate'],
+        ]);
+
+        register_rest_route(self::NAMESPACE, '/hardening/rule', [
+            'methods'             => 'POST',
+            'callback'            => [$this, 'set_hardening_rule'],
+            'permission_callback' => [$this, 'authenticate'],
+        ]);
+
+        register_rest_route(self::NAMESPACE, '/hardening/pause', [
+            'methods'             => 'POST',
+            'callback'            => [$this, 'pause_hardening'],
+            'permission_callback' => [$this, 'authenticate'],
+        ]);
+
+        register_rest_route(self::NAMESPACE, '/hardening/resume', [
+            'methods'             => 'POST',
+            'callback'            => [$this, 'resume_hardening'],
+            'permission_callback' => [$this, 'authenticate'],
+        ]);
+
         // Security Scan - Full scan
         register_rest_route(self::NAMESPACE, '/security/scan', [
             'methods'             => 'POST',
@@ -2187,6 +2212,82 @@ PHP;
                 'php' => $php,
             ],
         ]);
+    }
+
+    // =========================================================================
+    // SERVER HARDENING (.htaccess)
+    // =========================================================================
+
+    /**
+     * Send a hardening result: always HTTP 200 with success/reason at the top level
+     * (no `data` wrapper), and never cacheable — one host caches plugin REST GETs for 28 days.
+     *
+     * @param array $result LSM_Hardening::respond() shape.
+     * @return WP_REST_Response
+     */
+    private function hardening_response($result) {
+        $response = rest_ensure_response($result);
+        $response->header('Cache-Control', 'no-store, private');
+        return $response;
+    }
+
+    /**
+     * Get the hardening status, computed from the .htaccess files.
+     *
+     * @return WP_REST_Response
+     */
+    public function get_hardening_status() {
+        return $this->hardening_response(LSM_Hardening::instance()->respond(true, null, 'OK'));
+    }
+
+    /**
+     * Turn a hardening rule on or off.
+     *
+     * @param WP_REST_Request $request Request with 'rule' and 'enabled'.
+     * @return WP_REST_Response
+     */
+    public function set_hardening_rule($request) {
+        $hardening = LSM_Hardening::instance();
+        $rule      = $request->get_param('rule');
+        $enabled   = $request->get_param('enabled');
+
+        if (!is_string($rule) || !in_array($rule, LSM_Hardening::RULES, true)) {
+            return $this->hardening_response($hardening->respond(false, 'invalid_rule', 'Unknown hardening rule.'));
+        }
+
+        // (bool) "false" is true — never decide on/off from a loose cast.
+        if (!rest_is_boolean($enabled)) {
+            return $this->hardening_response($hardening->respond(false, 'invalid_rule', 'Parameter "enabled" must be a boolean.'));
+        }
+
+        return $this->hardening_response($hardening->set_rule($rule, rest_sanitize_boolean($enabled)));
+    }
+
+    /**
+     * Pause the archive rule for a download.
+     *
+     * @param WP_REST_Request $request Request with 'minutes' (15, 30 or 60).
+     * @return WP_REST_Response
+     */
+    public function pause_hardening($request) {
+        $hardening = LSM_Hardening::instance();
+        $minutes   = $request->get_param('minutes');
+
+        $is_whole_number = is_scalar($minutes) && (string) (int) $minutes === (string) $minutes;
+        if (!$is_whole_number || !in_array((int) $minutes, LSM_Hardening::PAUSE_MINUTES, true)) {
+            return $this->hardening_response($hardening->respond(false, 'invalid_minutes', 'The pause must be 15, 30 or 60 minutes.'));
+        }
+
+        return $this->hardening_response($hardening->pause((int) $minutes));
+    }
+
+    /**
+     * Put the archive rule back now.
+     *
+     * @return WP_REST_Response
+     */
+    public function resume_hardening() {
+        return $this->hardening_response(LSM_Hardening::instance()->resume());
     }
 
     /**
