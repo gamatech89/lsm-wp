@@ -768,4 +768,62 @@ class LSM_Hardening {
             'last_result'         => $state['last_result'],
         ];
     }
+
+    // =========================================================================
+    // LOCK
+    // =========================================================================
+
+    /**
+     * Take the operation lock.
+     *
+     * One options row, inserted with INSERT IGNORE so the database decides who wins
+     * (the statement WP_Upgrader::create_lock() uses). An option (unlike a transient)
+     * survives cache flushes and transient purges. A lock older than LOCK_TTL belongs
+     * to a dead process: delete it and retry once.
+     *
+     * @return bool False when another operation holds the lock.
+     */
+    public function acquire_lock() {
+        if ($this->insert_lock_row()) {
+            return true;
+        }
+
+        $taken_at = (int) get_option(self::LOCK_OPTION, 0);
+        if ($this->now() - $taken_at <= self::LOCK_TTL) {
+            return false;
+        }
+
+        delete_option(self::LOCK_OPTION);
+        return $this->insert_lock_row();
+    }
+
+    /**
+     * Insert the lock row. add_option() is not atomic (it checks, then upserts), so the
+     * insert goes straight to the database; update_option() afterwards only teaches the
+     * options cache about the row, as core does after its own lock insert.
+     *
+     * @return bool True when this process inserted the row.
+     */
+    protected function insert_lock_row() {
+        global $wpdb;
+
+        $inserted = $wpdb->query($wpdb->prepare(
+            "INSERT IGNORE INTO {$wpdb->options} (option_name, option_value, autoload) VALUES (%s, %s, 'no') /* LOCK */",
+            self::LOCK_OPTION,
+            (string) $this->now()
+        ));
+        if (!$inserted) {
+            return false;
+        }
+
+        update_option(self::LOCK_OPTION, $this->now(), false);
+        return true;
+    }
+
+    /**
+     * Release the operation lock.
+     */
+    public function release_lock() {
+        delete_option(self::LOCK_OPTION);
+    }
 }
