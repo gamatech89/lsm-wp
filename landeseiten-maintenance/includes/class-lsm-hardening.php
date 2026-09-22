@@ -1484,4 +1484,171 @@ class LSM_Hardening {
 
         return $this->apply('resume', 'block_archives', true, ['pause_minutes' => null]);
     }
+
+    // =========================================================================
+    // AUTO-RESUME (LIGHT PATH)
+    // =========================================================================
+
+    /**
+     * Are we running under WP-CLI / CLI cron?
+     *
+     * @return bool
+     */
+    protected function is_cli() {
+        return PHP_SAPI === 'cli';
+    }
+
+    /**
+     * Flush the response to the client so the work after it costs the visitor nothing.
+     */
+    protected function finish_request() {
+        if (function_exists('fastcgi_finish_request')) {
+            fastcgi_finish_request();
+        } elseif (function_exists('litespeed_finish_request')) {
+            litespeed_finish_request();
+        }
+    }
+
+    /**
+     * Is this a request to one of our own lsm/v1/hardening/* routes?
+     *
+     * @return bool
+     */
+    private function is_hardening_request() {
+        $checks = [
+            $_SERVER['REQUEST_URI'] ?? '',
+            $_GET['rest_route'] ?? '',
+            $_SERVER['PATH_INFO'] ?? '',
+            $_SERVER['REDIRECT_URL'] ?? '',
+        ];
+        foreach ($checks as $value) {
+            if (strpos(urldecode((string) $value), '/lsm/v1/hardening') !== false) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Load-time work, hooked on `init`. One cheap compare on the autoloaded option;
+     * the actual re-apply runs on `shutdown`, never inline in a visitor or uptime request.
+     */
+    public function on_init() {
+        $state = $this->get_state();
+
+        $overdue = $state['pause_until'] !== null && $state['pause_until'] < $this->now();
+        if (!$overdue || $this->is_cli() || $this->is_hardening_request()) {
+            return;
+        }
+
+        $last_attempt = (int) $state['last_attempt_at'];
+        if ($this->now() - $last_attempt > self::RESUME_THROTTLE) {
+            add_action('shutdown', [$this, 'run_auto_resume'], 9999);
+        }
+    }
+
+    /**
+     * Shutdown callback: answer the client first, then put the archive rule back.
+     */
+    public function run_auto_resume() {
+        $this->finish_request();
+        $this->auto_resume();
+    }
+
+    /**
+     * Put the archive rule back after an expired pause. Fails closed: the block was
+     * verified on this host when it was enabled, so it is only rolled back when the
+     * plugin stylesheet goes from 200 to non-200. pause_until is cleared only after
+     * the read-back shows the rule in the block; a failed attempt leaves it in the
+     * past (paused + overdue) and is retried after RESUME_THROTTLE seconds.
+     */
+    public function auto_resume() {
+        if (!$this->acquire_lock()) {
+            return;
+        }
+
+        $state = $this->get_state();
+        if ($state['pause_until'] === null || $state['pause_until'] >= $this->now()) {
+            // Resumed or moved between init and shutdown.
+            $this->release_lock();
+            return;
+        }
+
+        $state['last_attempt_at'] = $this->now();
+        $this->save_state($state);
+
+        $this->finish('auto_resume', 'block_archives', $this->execute_auto_resume(), ['pause_minutes' => null]);
+    }
+
+    /**
+     * The light path. Runs under the lock.
+     *
+     * @return array ['reason' => string|null, 'message' => string, 'warnings' => array]
+     */
+    private function execute_auto_resume() {
+        $current = $this->file_facts('content');
+        if ($current['corrupt']) {
+            // Damaged markers — or a file that cannot be read (file_facts() reports both as corrupt).
+            return ['reason' => 'markers_corrupt', 'message' => 'The .htaccess cannot be read or its LSM-HARDENING markers are damaged.', 'warnings' => []];
+        }
+
+        $enabled = ['block_archives'];
+        foreach ($this->rules_of('content') as $other) {
+            if ($current['in_block'][$other]) {
+                $enabled[] = $other;
+            }
+        }
+        $candidate = $this->replace_block($current['content'], $this->build_block('content', $enabled));
+
+        $asset_before = $this->baseline_asset();
+        $comparable   = $asset_before !== null && $this->asset_ok($asset_before);
+
+        // The loopback above can take seconds: never write a candidate built from stale bytes.
+        // The attempt fails, the pause stays overdue and the next attempt starts from the new bytes.
+        $fresh = $this->read_target('content');
+        if ($fresh['existed'] !== $current['existed'] || $fresh['content'] !== $current['content']) {
+            return [
+                'reason'   => 'write_failed',
+                'message'  => 'The .htaccess was changed by something else while the self-test was running. Nothing was changed.',
+                'warnings' => [],
+            ];
+        }
+
+        if (!$this->write_snapshot('content', $current)) {
+            return ['reason' => 'snapshot_failed', 'message' => 'The backup copy of the .htaccess could not be written.', 'warnings' => []];
+        }
+        $state            = $this->get_state();
+        $state['pending'] = [
+            'target'     => 'content',
+            'op'         => 'resume',
+            'started_at' => $this->now(),
+            'existed'    => $current['existed'],
+        ];
+        $this->save_state($state);
+
+        $written = $this->commit_target('content', $candidate, $current['content'], $current['existed']);
+        $after   = $this->file_facts('content');
+        if (!$written || !$after['in_block']['block_archives']) {
+            $failure             = $this->rollback('content', $current, ['reason' => 'write_failed', 'message' => 'The archive rule did not read back from the .htaccess.']);
+            $failure['warnings'] = [];
+            return $failure;
+        }
+
+        if (!$comparable) {
+            // The loopback itself does not work here: keep the block, say so.
+            return ['reason' => null, 'message' => 'Archive rule restored (not verified).', 'warnings' => ['unverified']];
+        }
+
+        $asset_after = $this->baseline_asset();
+        if ($asset_after['error']) {
+            return ['reason' => null, 'message' => 'Archive rule restored (not verified).', 'warnings' => ['unverified']];
+        }
+        if ($asset_after['code'] !== 200) {
+            $failure             = $this->rollback('content', $current, ['reason' => 'asset_broken', 'message' => sprintf('After the write the plugin stylesheet answered HTTP %d instead of 200.', $asset_after['code'])]);
+            $failure['warnings'] = [];
+            return $failure;
+        }
+
+        return ['reason' => null, 'message' => 'Archive rule restored.', 'warnings' => []];
+    }
 }
