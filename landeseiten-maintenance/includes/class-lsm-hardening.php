@@ -1542,6 +1542,13 @@ class LSM_Hardening {
     public function on_init() {
         $state = $this->get_state();
 
+        // isset(): this runs on every request, and a damaged option must not raise a warning on
+        // every page load. A pending without a start time counts as old.
+        if (is_array($state['pending']) && $this->now() - (isset($state['pending']['started_at']) ? (int) $state['pending']['started_at'] : 0) > self::RECOVERY_AFTER) {
+            $this->recover();
+            $state = $this->get_state();
+        }
+
         $overdue = $state['pause_until'] !== null && $state['pause_until'] < $this->now();
         if (!$overdue || $this->is_cli() || $this->is_hardening_request()) {
             return;
@@ -1665,5 +1672,116 @@ class LSM_Hardening {
         }
 
         return ['reason' => null, 'message' => 'Archive rule restored.', 'warnings' => []];
+    }
+
+    // =========================================================================
+    // CRASH RECOVERY
+    // =========================================================================
+
+    /**
+     * A pending operation older than RECOVERY_AFTER was killed between write and finish.
+     * No HTTP here: this runs inline on `init`.
+     *
+     * - op resume: roll forward — make sure the archive rule is in the block, then clear the pause.
+     * - any other op: put the snapshot back (or take our block out of a file that did not exist).
+     * - always: delete snapshot and probe files, clear pending, record crash_recovered.
+     */
+    private function recover() {
+        if (!$this->acquire_lock()) {
+            return;
+        }
+
+        $state   = $this->get_state();
+        $pending = $state['pending'];
+        // A pending without a start time (damaged option) counts as old and is recovered.
+        if (!is_array($pending) || $this->now() - (isset($pending['started_at']) ? (int) $pending['started_at'] : 0) <= self::RECOVERY_AFTER) {
+            $this->release_lock();
+            return;
+        }
+
+        // The file comes from the enum, never from a stored path.
+        $target  = isset($pending['target']) && $pending['target'] === 'uploads' ? 'uploads' : 'content';
+        $op      = isset($pending['op']) ? (string) $pending['op'] : '';
+        $resumed = false;
+
+        if ($op === 'resume') {
+            $resumed = $this->roll_forward_resume();
+        } else {
+            $this->restore_from_snapshot($target, !empty($pending['existed']));
+        }
+
+        $this->cleanup_artifacts();
+
+        if ($resumed) {
+            $state['pause_until'] = null;
+        }
+        $state['pending']     = null;
+        $state['last_result'] = [
+            'at'       => $this->now(),
+            'action'   => 'crash_recovery',
+            'rule'     => in_array($op, ['pause', 'resume'], true) ? 'block_archives' : null,
+            'ok'       => false,
+            'reason'   => 'crash_recovered',
+            'warnings' => [],
+        ];
+        $this->save_state($state);
+        $this->release_lock();
+
+        LSM_Logger::log('hardening_crash_recovered', 'warning', ['op' => $op, 'target' => $target]);
+    }
+
+    /**
+     * Recovery of a killed resume: the light path without HTTP.
+     *
+     * @return bool True when the read-back shows the archive rule in the block.
+     */
+    private function roll_forward_resume() {
+        $current = $this->file_facts('content');
+        if ($current['corrupt']) {
+            return false;
+        }
+
+        $enabled = ['block_archives'];
+        foreach ($this->rules_of('content') as $other) {
+            if ($current['in_block'][$other]) {
+                $enabled[] = $other;
+            }
+        }
+        $candidate = $this->replace_block($current['content'], $this->build_block('content', $enabled));
+
+        if (!$this->commit_target('content', $candidate, $current['content'], $current['existed'])) {
+            $this->restore_target('content', $current['content'], $current['existed']);
+            return false;
+        }
+
+        $after = $this->file_facts('content');
+        return $after['in_block']['block_archives'];
+    }
+
+    /**
+     * Recovery of any other killed operation: back to the bytes from before it started.
+     *
+     * @param string $target  'content' or 'uploads'.
+     * @param bool   $existed pending.existed.
+     */
+    private function restore_from_snapshot($target, $existed) {
+        $snapshot = dirname($this->target_file($target)) . '/' . self::SNAPSHOT_FILE;
+
+        if (is_file($snapshot)) {
+            $original = @file_get_contents($snapshot);
+            if ($original !== false) {
+                $this->restore_target($target, $original, true);
+            }
+            return;
+        }
+
+        if (!$existed) {
+            // No snapshot because there was no file: take our block out, delete the file if nothing else is in it.
+            $current  = $this->read_target($target);
+            $stripped = $this->replace_block($current['content'], '');
+            if ($stripped !== null) {
+                $this->commit_target($target, $stripped, $current['content'], false);
+            }
+        }
     }
 }
