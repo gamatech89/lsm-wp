@@ -1071,4 +1071,340 @@ class LSM_Hardening {
             }
         }
     }
+
+    // =========================================================================
+    // FULL APPLY PROCEDURE
+    // =========================================================================
+
+    /**
+     * Store the lsm_hardening option (autoloaded: on_init() reads it on every request).
+     *
+     * @param array $state State.
+     */
+    private function save_state(array $state) {
+        update_option(self::OPTION, $state, true);
+    }
+
+    /**
+     * Build the top-level shape every REST response has.
+     *
+     * @param bool        $success  Outcome.
+     * @param string|null $reason   Reason code on failure.
+     * @param string      $message  Human-readable message.
+     * @param array       $warnings Warning codes.
+     * @return array
+     */
+    public function respond($success, $reason, $message, array $warnings = []) {
+        return [
+            'success'  => (bool) $success,
+            'reason'   => $reason,
+            'message'  => $message,
+            'warnings' => array_values($warnings),
+            'status'   => $this->get_status(),
+        ];
+    }
+
+    /**
+     * Turn a rule on (also: adopt a manual block, re-apply after drift) or off.
+     *
+     * @param string $rule    Rule key.
+     * @param bool   $enabled Desired state.
+     * @return array respond() shape.
+     */
+    public function set_rule($rule, $enabled) {
+        if (!is_string($rule) || !in_array($rule, self::RULES, true)) {
+            return $this->respond(false, 'invalid_rule', 'Unknown hardening rule.');
+        }
+
+        $enabled = (bool) $enabled;
+        $commit  = ['rules' => [$rule => $enabled]];
+        if ($rule === 'block_archives') {
+            // Turning the archive rule on or off ends any pause.
+            $commit['pause_minutes'] = null;
+        }
+
+        return $this->apply($enabled ? 'enable' : 'disable', $rule, $enabled, $commit);
+    }
+
+    /**
+     * The full safe procedure: preflight, lock, run, finish.
+     *
+     * A throwable inside execute() is treated like a killed process: lock, `pending`
+     * and the snapshot stay where they are and crash recovery cleans up.
+     *
+     * @param string $action   enable|disable|pause|resume — also pending.op and last_result.action.
+     * @param string $rule     Rule the operation is about.
+     * @param bool   $in_block Whether the rule must be in the managed block afterwards.
+     * @param array  $commit   Committed on success only: ['rules' => [rule => bool]] and/or
+     *                         ['pause_minutes' => int|null] (null clears pause_until).
+     * @return array respond() shape.
+     */
+    private function apply($action, $rule, $in_block, array $commit) {
+        $unsupported = $this->preflight($rule);
+        if ($unsupported !== null) {
+            return $this->respond(false, 'unsupported', sprintf('Not supported on this server (%s).', $unsupported));
+        }
+
+        if (!$this->acquire_lock()) {
+            return $this->respond(false, 'busy', 'Another hardening operation is running on this site. Try again in a moment.');
+        }
+
+        if (function_exists('set_time_limit')) {
+            @set_time_limit(120);
+        }
+
+        $outcome = $this->execute($action, $rule, $in_block);
+
+        return $this->finish($action, $rule, $outcome, $commit);
+    }
+
+    /**
+     * Steps 2-7 of the procedure. Runs under the lock.
+     *
+     * @param string $action   Operation.
+     * @param string $rule     Rule key.
+     * @param bool   $in_block Whether the rule must be in the block afterwards.
+     * @return array ['reason' => string|null, 'message' => string, 'warnings' => array]
+     */
+    private function execute($action, $rule, $in_block) {
+        $target  = $this->target_of($rule);
+        $current = $this->file_facts($target);
+
+        if ($current['corrupt']) {
+            return [
+                'reason'   => 'markers_corrupt',
+                'message'  => 'The LSM-HARDENING markers in this .htaccess are damaged (a BEGIN without END, or more than one block). Nothing was changed — repair the file by hand.',
+                'warnings' => [],
+            ];
+        }
+
+        // Candidate block: what the file holds right now, plus or minus this rule. The file is
+        // the truth — a drifted rule is never re-added as a side effect of touching another one.
+        $enabled = [];
+        foreach ($this->rules_of($target) as $other) {
+            if ($other === $rule ? $in_block : $current['in_block'][$other]) {
+                $enabled[] = $other;
+            }
+        }
+        $candidate = $in_block ? $this->strip_manual_blocks($current['content'], $rule) : $current['content'];
+        $candidate = $this->replace_block($candidate, $this->build_block($target, $enabled));
+
+        // 2. Baseline before.
+        $asset = $this->baseline_asset();
+        if (!$this->asset_ok($asset)) {
+            return [
+                'reason'   => 'loopback_blocked',
+                'message'  => sprintf('The site could not fetch its own plugin stylesheet (HTTP %d), so a change could not be verified. Nothing was changed.', $asset['code']),
+                'warnings' => [],
+            ];
+        }
+        $home_before = $this->baseline_home();
+        if ($home_before['error']) {
+            return [
+                'reason'   => 'loopback_blocked',
+                'message'  => 'The site could not fetch its own homepage, so a change could not be verified. Nothing was changed.',
+                'warnings' => [],
+            ];
+        }
+
+        // 3. Probes before.
+        $probes = $this->prepare_probes($rule);
+        $before = $this->judge_before($rule, $this->fetch_probes($probes), $current['in_block'][$rule] || $current['manual'][$rule]);
+        if ($before['reason'] !== null) {
+            return $before;
+        }
+        $warnings = $before['warnings'];
+
+        // The loopbacks above can take tens of seconds: never write a candidate built from stale bytes.
+        $fresh = $this->read_target($target);
+        if ($fresh['existed'] !== $current['existed'] || $fresh['content'] !== $current['content']) {
+            return [
+                'reason'   => 'write_failed',
+                'message'  => 'The .htaccess was changed by something else while the self-test was running. Nothing was changed — try again.',
+                'warnings' => $warnings,
+            ];
+        }
+
+        // 4. Snapshot + pending. The original bytes stay in $current for the same-request rollback.
+        if (!$this->write_snapshot($target, $current)) {
+            return [
+                'reason'   => 'snapshot_failed',
+                'message'  => 'The backup copy of the .htaccess could not be written and read back. Nothing was changed.',
+                'warnings' => $warnings,
+            ];
+        }
+        $state            = $this->get_state();
+        $state['pending'] = [
+            'target'     => $target,
+            'op'         => $action,
+            'started_at' => $this->now(),
+            'existed'    => $current['existed'],
+        ];
+        $this->save_state($state);
+
+        // 5. Write, 6. self-test after.
+        if (!$this->commit_target($target, $candidate, $current['content'], $current['existed'])) {
+            $failure = ['reason' => 'write_failed', 'message' => 'The .htaccess did not read back the way it was written.'];
+        } else {
+            $failure = $this->self_test_after($rule, $in_block, $probes, $home_before);
+        }
+
+        if ($failure['reason'] === null) {
+            return ['reason' => null, 'message' => 'Applied and verified', 'warnings' => $warnings];
+        }
+
+        // 7. Rollback.
+        $failure             = $this->rollback($target, $current, $failure);
+        $failure['warnings'] = $warnings;
+        return $failure;
+    }
+
+    /**
+     * Step 4: write .htaccess.lsm-bak beside the file and read it back identical.
+     * A file that does not exist has nothing to snapshot (pending.existed covers it).
+     *
+     * @param string $target  'content' or 'uploads'.
+     * @param array  $current Result of file_facts().
+     * @return bool
+     */
+    private function write_snapshot($target, array $current) {
+        $snapshot = dirname($this->target_file($target)) . '/' . self::SNAPSHOT_FILE;
+
+        if (!$current['existed']) {
+            if (file_exists($snapshot)) {
+                @unlink($snapshot);
+            }
+            return true;
+        }
+
+        $this->put_contents($snapshot, $current['content']);
+        return @file_get_contents($snapshot) === $current['content'];
+    }
+
+    /**
+     * Step 6: both baselines again, then the probes.
+     *
+     * @param string $rule        Rule key.
+     * @param bool   $in_block    Whether the rule is in the block that was just written.
+     * @param array  $probes      Result of prepare_probes().
+     * @param array  $home_before Baseline 2b from before the write.
+     * @return array ['reason' => string|null, 'message' => string]
+     */
+    private function self_test_after($rule, $in_block, array $probes, array $home_before) {
+        $asset = $this->baseline_asset();
+        if (!$this->asset_ok($asset)) {
+            return [
+                'reason'  => 'asset_broken',
+                'message' => sprintf('After the write the plugin stylesheet below wp-content answered HTTP %d instead of 200.', $asset['code']),
+            ];
+        }
+
+        $home = $this->baseline_home();
+        if ($home['error'] || $home['code'] !== $home_before['code'] || ($home_before['body'] !== '' && $home['body'] === '')) {
+            return [
+                'reason'  => 'asset_broken',
+                'message' => sprintf('After the write the homepage answered HTTP %d (before: %d) for an anonymous visitor.', $home['code'], $home_before['code']),
+            ];
+        }
+
+        return $this->judge_after($rule, $in_block, $this->fetch_probes($probes));
+    }
+
+    /**
+     * Step 7: restore the original bytes (or delete a file that did not exist) and
+     * re-check baseline 2a.
+     *
+     * @param string $target  'content' or 'uploads'.
+     * @param array  $current Result of file_facts() from before the write.
+     * @param array  $failure ['reason', 'message'] that triggered the rollback.
+     * @return array ['reason', 'message'] — the original failure, or rollback_failed.
+     */
+    private function rollback($target, array $current, array $failure) {
+        if (!$this->restore_target($target, $current['content'], $current['existed'])) {
+            // Last resort: whatever is in the file now, at least take our block out of it.
+            $this->strip_managed_block($target);
+            return [
+                'reason'  => 'rollback_failed',
+                'message' => $failure['message'] . ' The original .htaccess could not be restored; the managed block was stripped instead. Check the file by hand.',
+            ];
+        }
+
+        if (!$this->asset_ok($this->baseline_asset())) {
+            return [
+                'reason'  => 'rollback_failed',
+                'message' => $failure['message'] . ' The original .htaccess was restored, but files below wp-content still do not load. Check the site now.',
+            ];
+        }
+
+        $failure['message'] .= ' The change was rolled back.';
+        return $failure;
+    }
+
+    /**
+     * Remove the managed block from a target file, best effort.
+     *
+     * @param string $target 'content' or 'uploads'.
+     */
+    private function strip_managed_block($target) {
+        $current  = $this->read_target($target);
+        $stripped = $this->replace_block($current['content'], '');
+        if ($stripped !== null && $stripped !== $current['content']) {
+            $this->put_contents($this->target_file($target), $stripped);
+        }
+    }
+
+    /**
+     * Step 8, both paths: commit on success, clear pending, write last_result, then delete the
+     * snapshot and the probe files, release the lock, log.
+     *
+     * The state is saved BEFORE the artifacts are deleted: a kill in between then leaves a stray
+     * snapshot (harmless, the next operation removes it) instead of a `pending` without a
+     * snapshot, which crash recovery could not undo.
+     *
+     * @param string $action  last_result.action.
+     * @param string $rule    Rule key.
+     * @param array  $outcome ['reason' => string|null, 'message' => string, 'warnings' => array]
+     * @param array  $commit  See apply().
+     * @return array respond() shape.
+     */
+    private function finish($action, $rule, array $outcome, array $commit) {
+        $ok    = $outcome['reason'] === null;
+        $state = $this->get_state();
+
+        if ($ok) {
+            if (isset($commit['rules'])) {
+                foreach ($commit['rules'] as $key => $value) {
+                    $state['rules'][$key] = $value;
+                }
+            }
+            if (array_key_exists('pause_minutes', $commit)) {
+                $state['pause_until'] = $commit['pause_minutes'] === null ? null : $this->now() + $commit['pause_minutes'] * 60;
+            }
+            unset($state['rule_failures'][$rule]);
+        } else {
+            $state['rule_failures'][$rule] = ['at' => $this->now(), 'reason' => $outcome['reason']];
+        }
+
+        $state['pending']     = null;
+        $state['last_result'] = [
+            'at'       => $this->now(),
+            'action'   => $action,
+            'rule'     => $rule,
+            'ok'       => $ok,
+            'reason'   => $outcome['reason'],
+            'warnings' => array_values($outcome['warnings']),
+        ];
+        $this->save_state($state);
+        $this->cleanup_artifacts();
+        $this->release_lock();
+
+        LSM_Logger::log($ok ? 'hardening_applied' : 'hardening_failed', $ok ? 'success' : 'error', [
+            'action'   => $action,
+            'rule'     => $rule,
+            'reason'   => $outcome['reason'],
+            'warnings' => $outcome['warnings'],
+        ]);
+
+        return $this->respond($ok, $outcome['reason'], $outcome['message'], $outcome['warnings']);
+    }
 }
