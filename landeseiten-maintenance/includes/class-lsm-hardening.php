@@ -246,4 +246,204 @@ class LSM_Hardening {
             [self::MARKER_END]
         ));
     }
+
+    // =========================================================================
+    // STRICT FILE HANDLING
+    // =========================================================================
+
+    /**
+     * Absolute path of a target's .htaccess.
+     *
+     * @param string $target 'content' or 'uploads'.
+     * @return string
+     */
+    public function target_file($target) {
+        return ($target === 'uploads' ? $this->uploads_dir() : $this->content_dir()) . '/.htaccess';
+    }
+
+    /**
+     * Read a target file.
+     *
+     * @param string $target 'content' or 'uploads'.
+     * @return array ['existed' => bool, 'content' => string], plus 'unreadable' => true when the
+     *               file exists but cannot be read (content is '' then — and nobody may write).
+     */
+    public function read_target($target) {
+        $file = $this->target_file($target);
+        if (!is_file($file)) {
+            return ['existed' => false, 'content' => ''];
+        }
+        $content = @file_get_contents($file);
+        if ($content === false) {
+            // Exists but cannot be read: never treat it as empty — a write would destroy it.
+            return ['existed' => true, 'content' => '', 'unreadable' => true];
+        }
+        return ['existed' => true, 'content' => $content];
+    }
+
+    /**
+     * Byte offsets of every line that consists of exactly one marker.
+     *
+     * @param string $content File content.
+     * @param string $marker  Marker text.
+     * @return array List of [offset, length].
+     */
+    private function marker_offsets($content, $marker) {
+        $found = [];
+        if (preg_match_all('/^[ \t]*' . preg_quote($marker, '/') . '[ \t]*\r?$/m', $content, $matches, PREG_OFFSET_CAPTURE)) {
+            foreach ($matches[0] as $match) {
+                $found[] = [$match[1], strlen($match[0])];
+            }
+        }
+        return $found;
+    }
+
+    /**
+     * Strict marker parser: exactly zero or one BEGIN, followed by its END,
+     * no END without a BEGIN. Anything else is corrupt and must not be written to.
+     *
+     * @param string $content File content.
+     * @return array ['corrupt' => bool, 'found' => bool, 'start' => int, 'end' => int, 'lines' => array]
+     *               start/end are the byte range of the block (BEGIN line up to the end of the END line,
+     *               without its line break); lines are the block's body lines.
+     */
+    public function parse_markers($content) {
+        $result = ['corrupt' => false, 'found' => false, 'start' => 0, 'end' => 0, 'lines' => []];
+
+        $begin = $this->marker_offsets($content, self::MARKER_BEGIN);
+        $end   = $this->marker_offsets($content, self::MARKER_END);
+
+        if (empty($begin) && empty($end)) {
+            return $result;
+        }
+
+        if (count($begin) !== 1 || count($end) !== 1 || $end[0][0] < $begin[0][0]) {
+            $result['corrupt'] = true;
+            return $result;
+        }
+
+        $body_start = $begin[0][0] + $begin[0][1];
+        $body       = substr($content, $body_start, $end[0][0] - $body_start);
+
+        $result['found'] = true;
+        $result['start'] = $begin[0][0];
+        $result['end']   = $end[0][0] + $end[0][1];
+        foreach (explode("\n", trim($body, "\r\n")) as $line) {
+            $result['lines'][] = rtrim($line, "\r");
+        }
+
+        return $result;
+    }
+
+    /**
+     * Put $block where the managed block is (or append it), or remove the managed
+     * block when $block is ''. Everything outside the markers is kept byte for byte.
+     *
+     * @param string $content File content.
+     * @param string $block   Block from build_block(), '' to remove.
+     * @return string|null New content, or null when the markers are corrupt.
+     */
+    public function replace_block($content, $block) {
+        $parsed = $this->parse_markers($content);
+        if ($parsed['corrupt']) {
+            return null;
+        }
+
+        if (!$parsed['found']) {
+            if ($block === '') {
+                return $content;
+            }
+            if ($content === '') {
+                return $block . "\n";
+            }
+            // A file without a trailing newline would fuse its last line onto our marker.
+            $separator = substr($content, -1) === "\n" ? "\n" : "\n\n";
+            return $content . $separator . $block . "\n";
+        }
+
+        $before = substr($content, 0, $parsed['start']);
+        $after  = (string) substr($content, $parsed['end']);
+
+        if ($block !== '') {
+            return $before . $block . $after;
+        }
+
+        // Removal: take the END line's line break and the blank line we put in front with it.
+        if (substr($after, 0, 2) === "\r\n") {
+            $after = (string) substr($after, 2);
+        } elseif (substr($after, 0, 1) === "\n") {
+            $after = (string) substr($after, 1);
+        }
+        if (substr($before, -2) === "\n\n") {
+            $before = substr($before, 0, -1);
+        }
+
+        return $before . $after;
+    }
+
+    /**
+     * Write a file. A seam so tests can simulate short or failing writes.
+     *
+     * @param string $file    Absolute path.
+     * @param string $content Content.
+     * @return int|false Bytes written.
+     */
+    protected function put_contents($file, $content) {
+        return @file_put_contents($file, $content, LOCK_EX);
+    }
+
+    /**
+     * Write new content into a target file and verify it by reading it back.
+     * A file this operation would leave empty, and that did not exist before, is deleted.
+     * Does not restore anything on failure — the caller still holds the original bytes.
+     *
+     * @param string $target   'content' or 'uploads'.
+     * @param string $content  New full content.
+     * @param string $original Content before the operation ('' when the file did not exist).
+     * @param bool   $existed  Whether the file existed before the operation.
+     * @return bool False when the read-back does not match.
+     */
+    public function commit_target($target, $content, $original, $existed) {
+        $file = $this->target_file($target);
+
+        if ($content === $original) {
+            return true;
+        }
+
+        if (!$existed && trim($content) === '') {
+            if (file_exists($file)) {
+                @unlink($file);
+            }
+            return !file_exists($file);
+        }
+
+        $this->put_contents($file, $content);
+
+        $written = @file_get_contents($file);
+        return $written !== false && sha1($written) === sha1($content);
+    }
+
+    /**
+     * Put a target file back to its original bytes (or delete it if it did not exist).
+     *
+     * @param string $target   'content' or 'uploads'.
+     * @param string $original Original bytes held in memory.
+     * @param bool   $existed  Whether the file existed before the operation.
+     * @return bool True when the file is back to its original state.
+     */
+    public function restore_target($target, $original, $existed) {
+        $file = $this->target_file($target);
+
+        if (!$existed) {
+            if (file_exists($file)) {
+                @unlink($file);
+            }
+            return !file_exists($file);
+        }
+
+        $this->put_contents($file, $original);
+
+        $written = @file_get_contents($file);
+        return $written !== false && sha1($written) === sha1($original);
+    }
 }
