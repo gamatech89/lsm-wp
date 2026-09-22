@@ -29,8 +29,11 @@ class LSM_Testable_Hardening extends LSM_Hardening {
     /** @var bool */
     public $cli = false;
 
-    /** @var int number of finish_request() calls */
+    /** @var int number of finish_request() calls that actually flushed */
     public $finished = 0;
+
+    /** @var bool whether finish_request() can hand off the response (a finisher function exists) */
+    public $can_finish = true;
 
     /** @var callable|null function($file, $content): return null to write normally, anything else is returned instead of writing */
     public $put_hook = null;
@@ -60,7 +63,10 @@ class LSM_Testable_Hardening extends LSM_Hardening {
     }
 
     protected function finish_request() {
-        $this->finished++;
+        if ($this->can_finish) {
+            $this->finished++;
+        }
+        return $this->can_finish;
     }
 
     protected function put_contents($file, $content) {

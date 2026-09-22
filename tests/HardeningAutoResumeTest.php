@@ -126,6 +126,21 @@ class HardeningAutoResumeTest extends HardeningTestCase {
         $this->assertNull($this->h->get_state()['pause_until']);
     }
 
+    public function test_without_a_finish_function_the_shutdown_callback_does_nothing() {
+        $this->expire();
+        $this->h->can_finish = false;
+        $before = get_option('lsm_hardening');
+
+        $this->h->run_auto_resume();
+
+        $this->assertSame($before, get_option('lsm_hardening'));
+        $this->assertSame([], $this->server->requests);
+        $this->assertSame($this->paused_file, $this->get('content'));
+        $this->assertFalse(get_option('lsm_hardening_lock'));
+        $this->assertSame(0, $this->h->finished);
+        $this->assertSame([], $this->artifacts());
+    }
+
     public function test_light_path_puts_the_rule_back_with_two_loopbacks_and_no_probes() {
         $this->expire();
         $seen_pending = null;

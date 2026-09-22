@@ -1500,13 +1500,19 @@ class LSM_Hardening {
 
     /**
      * Flush the response to the client so the work after it costs the visitor nothing.
+     *
+     * @return bool Whether the response was handed off to the client.
      */
     protected function finish_request() {
         if (function_exists('fastcgi_finish_request')) {
             fastcgi_finish_request();
-        } elseif (function_exists('litespeed_finish_request')) {
-            litespeed_finish_request();
+            return true;
         }
+        if (function_exists('litespeed_finish_request')) {
+            litespeed_finish_request();
+            return true;
+        }
+        return false;
     }
 
     /**
@@ -1551,7 +1557,12 @@ class LSM_Hardening {
      * Shutdown callback: answer the client first, then put the archive rule back.
      */
     public function run_auto_resume() {
-        $this->finish_request();
+        if (!$this->finish_request()) {
+            // Neither finisher exists on this SAPI (mod_php, CGI): the light path would run
+            // inside the visitor's — or the uptime probe's — connection. Do nothing at all and
+            // leave it to the platform backstop and the REST resume endpoint.
+            return;
+        }
         $this->auto_resume();
     }
 
@@ -1565,6 +1576,10 @@ class LSM_Hardening {
     public function auto_resume() {
         if (!$this->acquire_lock()) {
             return;
+        }
+
+        if (function_exists('set_time_limit')) {
+            @set_time_limit(120);
         }
 
         $state = $this->get_state();
