@@ -826,4 +826,249 @@ class LSM_Hardening {
     public function release_lock() {
         delete_option(self::LOCK_OPTION);
     }
+
+    // =========================================================================
+    // LOOPBACK, BASELINE AND PROBES
+    // =========================================================================
+
+    /**
+     * Absolute path of this plugin's directory.
+     *
+     * @return string
+     */
+    protected function plugin_dir() {
+        return LSM_PLUGIN_DIR;
+    }
+
+    /**
+     * One loopback GET, reduced to what the self-test looks at.
+     *
+     * @param string $url URL on this site.
+     * @return array ['error' => bool, 'code' => int, 'body' => string, 'challenge' => bool]
+     */
+    public function loopback($url) {
+        $response = $this->http_request($url, [
+            'timeout'     => self::LOOPBACK_TIMEOUT,
+            // An "ErrorDocument 403 https://..." would turn a 403 into 302 -> 200.
+            'redirection' => 0,
+            'cookies'     => [],
+            'sslverify'   => apply_filters('https_local_ssl_verify', false, $url),
+            'headers'     => ['Cache-Control' => 'no-cache'],
+        ]);
+
+        if (is_wp_error($response)) {
+            return ['error' => true, 'code' => 0, 'body' => '', 'challenge' => false];
+        }
+
+        return [
+            'error'     => false,
+            'code'      => (int) wp_remote_retrieve_response_code($response),
+            'body'      => (string) wp_remote_retrieve_body($response),
+            'challenge' => strtolower((string) wp_remote_retrieve_header($response, 'cf-mitigated')) === 'challenge',
+        ];
+    }
+
+    /**
+     * A response that proves nothing about our rule: no answer, basic auth,
+     * a server error or a Cloudflare challenge. Never counts as "403 effective".
+     *
+     * @param array $response Result of loopback().
+     * @return bool
+     */
+    private function is_inconclusive(array $response) {
+        return $response['error'] || $response['challenge'] || $response['code'] === 401 || $response['code'] >= 500;
+    }
+
+    /**
+     * Append a fresh cache-buster, so a CDN or nginx cached 200 can neither mask a 500
+     * (baseline) nor answer the "after" fetch of a probe with its cached "before" response.
+     *
+     * @param string $url URL.
+     * @return string
+     */
+    private function bust($url) {
+        return add_query_arg('lsm_hardening', bin2hex(random_bytes(4)), $url);
+    }
+
+    /**
+     * Baseline 2a: a static file of this plugin, served from below wp-content.
+     *
+     * @return array|null loopback() result, or null when the plugin does not live below wp-content.
+     */
+    public function baseline_asset() {
+        $plugin_dir  = rtrim(str_replace('\\', '/', $this->plugin_dir()), '/') . '/';
+        $content_dir = rtrim(str_replace('\\', '/', $this->content_dir()), '/') . '/';
+        if (strpos($plugin_dir, $content_dir) !== 0) {
+            return null;
+        }
+
+        return $this->loopback($this->bust(LSM_PLUGIN_URL . 'assets/css/ticket-ui.css'));
+    }
+
+    /**
+     * Was baseline 2a fine (or not applicable)?
+     *
+     * @param array|null $asset Result of baseline_asset().
+     * @return bool
+     */
+    private function asset_ok($asset) {
+        return $asset === null || (!$asset['error'] && $asset['code'] === 200 && $asset['body'] !== '');
+    }
+
+    /**
+     * Baseline 2b: the homepage as an anonymous visitor — no query string, no cookies —
+     * because rewrite-mode page caches serve exactly that request from wp-content/cache/.
+     *
+     * @return array loopback() result.
+     */
+    public function baseline_home() {
+        return $this->loopback(home_url('/'));
+    }
+
+    /**
+     * Prepare the probes of a rule.
+     *
+     * Archives: two real files (.zip is what a front-end nginx serves itself, .wpress is
+     * what the team downloads) with a random token as body. debug.log and the uploads PHP
+     * probe are plain URLs: Apache answers 403 for a covered name before it looks for the
+     * file, so the PHP probe is never created. No cache-buster here: fetch_probes() adds a
+     * fresh one to every single request.
+     *
+     * @param string $rule Rule key.
+     * @return array List of ['label' => string, 'url' => string, 'token' => string|null].
+     */
+    public function prepare_probes($rule) {
+        if ($rule === 'block_debug_log') {
+            return [['label' => 'debug.log', 'url' => content_url('debug.log'), 'token' => null]];
+        }
+
+        if ($rule === 'block_uploads_php') {
+            $upload_dir = wp_upload_dir();
+            $name       = self::PROBE_PREFIX . bin2hex(random_bytes(8)) . '.php';
+            return [['label' => 'uploads .php', 'url' => rtrim($upload_dir['baseurl'], '/') . '/' . $name, 'token' => null]];
+        }
+
+        $probes = [];
+        foreach (['zip', 'wpress'] as $extension) {
+            $name  = self::PROBE_PREFIX . bin2hex(random_bytes(8)) . '.' . $extension;
+            $token = bin2hex(random_bytes(16));
+            $this->put_contents($this->content_dir() . '/' . $name, $token);
+            $probes[] = ['label' => '.' . $extension, 'url' => content_url($name), 'token' => $token];
+        }
+        return $probes;
+    }
+
+    /**
+     * Fetch every probe once.
+     *
+     * @param array $probes Result of prepare_probes().
+     * @return array The probes with 'code' (int), 'inconclusive' (bool) and 'served' (bool: 200, and the token when there is one).
+     */
+    public function fetch_probes(array $probes) {
+        foreach ($probes as $i => $probe) {
+            // Fresh cache-buster per fetch: the same URL is fetched before and after the write, and an
+            // edge cache (Cloudflare caches .zip by extension, a 200 for ~2 h, keyed by URL + query, and
+            // ignores our "Cache-Control: no-cache") would answer the "after" fetch with the cached
+            // "before" 200 -> a false rule_ineffective.
+            $response = $this->loopback($this->bust($probe['url']));
+
+            $probes[$i]['code']         = $response['code'];
+            $probes[$i]['inconclusive'] = $this->is_inconclusive($response);
+            $probes[$i]['served']       = $response['code'] === 200
+                && ($probe['token'] === null || strpos($response['body'], $probe['token']) !== false);
+        }
+        return $probes;
+    }
+
+    /**
+     * Judge the probes fetched before the write.
+     *
+     * @param string $rule      Rule key.
+     * @param array  $probes    Result of fetch_probes().
+     * @param bool   $explained Whether the file itself already explains a 403 (rule in our block, or a manual block).
+     * @return array ['reason' => string|null, 'message' => string, 'warnings' => array]
+     */
+    public function judge_before($rule, array $probes, $explained) {
+        $warnings = [];
+
+        foreach ($probes as $probe) {
+            // Archive probes are real files: only "served with the token" or "already 403" make sense.
+            $plausible = $rule !== 'block_archives' || $probe['served'] || $probe['code'] === 403;
+            if ($probe['inconclusive'] || !$plausible) {
+                return [
+                    'reason'   => 'loopback_blocked',
+                    'message'  => sprintf('The site could not fetch its own %s probe (HTTP %d), so the rule cannot be verified. Nothing was changed.', $probe['label'], $probe['code']),
+                    'warnings' => [],
+                ];
+            }
+            if ($probe['code'] === 403 && !$explained) {
+                $warnings = ['already_blocked_elsewhere'];
+            }
+        }
+
+        return ['reason' => null, 'message' => '', 'warnings' => $warnings];
+    }
+
+    /**
+     * Judge the probes fetched after the write.
+     *
+     * @param string $rule     Rule key.
+     * @param bool   $in_block Whether the rule is in the block that was just written.
+     * @param array  $probes   Result of fetch_probes().
+     * @return array ['reason' => string|null, 'message' => string]
+     */
+    public function judge_after($rule, $in_block, array $probes) {
+        foreach ($probes as $probe) {
+            if ($probe['inconclusive']) {
+                return [
+                    'reason'  => 'loopback_blocked',
+                    'message' => sprintf('The %s probe could not be evaluated after the write (HTTP %d).', $probe['label'], $probe['code']),
+                ];
+            }
+            if ($in_block && $probe['code'] !== 403) {
+                return [
+                    'reason'  => 'rule_ineffective',
+                    'message' => sprintf('The rule has no effect on this server: the %s probe was still answered with HTTP %d instead of 403 (a front-end nginx or CDN serving static files?).', $probe['label'], $probe['code']),
+                ];
+            }
+            if (!$in_block && $rule === 'block_archives' && $probe['label'] === '.wpress' && !$probe['served']) {
+                return [
+                    'reason'  => 'pause_ineffective_foreign_rule',
+                    'message' => sprintf('Our rule is out of the file, but the .wpress probe is still answered with HTTP %d: another rule on this server blocks it.', $probe['code']),
+                ];
+            }
+        }
+
+        return ['reason' => null, 'message' => ''];
+    }
+
+    /**
+     * Is this file name one of our own short-lived artifacts (probe file or snapshot)?
+     * cleanup_artifacts() deletes these and the plugin's suspicious-file collectors skip them,
+     * so the match is exact — a bare prefix match would be an evasion name for malware.
+     *
+     * @param string $name File name without directory.
+     * @return bool
+     */
+    public static function is_own_artifact($name) {
+        if ($name === self::SNAPSHOT_FILE) {
+            return true;
+        }
+        // Exactly what prepare_probes() creates. Never a PHP name: the uploads PHP probe is never
+        // created, so a "lsm-probe-*.php" on disk is somebody else's file and must be reported.
+        return preg_match('/^' . preg_quote(self::PROBE_PREFIX, '/') . '[a-f0-9]{16}\.(zip|wpress)\z/', $name) === 1;
+    }
+
+    /**
+     * Delete every probe file and snapshot in both directories. Paths are derived, never stored.
+     */
+    public function cleanup_artifacts() {
+        foreach ([$this->content_dir(), $this->uploads_dir()] as $dir) {
+            foreach ((array) @scandir($dir) as $name) {
+                if (is_string($name) && self::is_own_artifact($name) && is_file($dir . '/' . $name)) {
+                    @unlink($dir . '/' . $name);
+                }
+            }
+        }
+    }
 }
