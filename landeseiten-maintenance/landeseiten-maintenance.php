@@ -83,6 +83,7 @@ final class Landeseiten_Maintenance {
         require_once LSM_PLUGIN_DIR . 'includes/class-lsm-scan-collector.php';
         require_once LSM_PLUGIN_DIR . 'includes/class-lsm-scan-data-collector.php';
         require_once LSM_PLUGIN_DIR . 'includes/class-lsm-media.php';
+        require_once LSM_PLUGIN_DIR . 'includes/class-lsm-hardening.php';
         require_once LSM_PLUGIN_DIR . 'includes/class-lsm-updater.php';
 
         // Admin
@@ -220,6 +221,10 @@ final class Landeseiten_Maintenance {
 
         // Initialize PHP error handling
         LSM_Php_Errors::init();
+
+        // Managed .htaccess hardening: crash recovery and pause expiry. Must stay on `init`,
+        // after LSM_Logger::init() — both log, and the logger needs pluggable.php.
+        LSM_Hardening::instance()->on_init();
 
         if (is_admin()) {
             new LSM_Admin();
@@ -425,6 +430,9 @@ final class Landeseiten_Maintenance {
         $settings = get_option('lsm_settings', []);
         $settings['maintenance_mode'] = false;
         update_option('lsm_settings', $settings);
+
+        // A deactivated plugin can neither pause nor undo: take the managed .htaccess blocks out
+        LSM_Hardening::instance()->deactivate();
 
         flush_rewrite_rules();
     }
