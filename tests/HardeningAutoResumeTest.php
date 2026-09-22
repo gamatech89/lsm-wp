@@ -318,6 +318,21 @@ class HardeningAutoResumeTest extends HardeningTestCase {
         $this->assertFalse(get_option('lsm_hardening_lock'));
     }
 
+    public function test_an_array_rest_route_is_ignored_without_a_notice() {
+        $this->expire();
+        $_GET['rest_route'] = ['x'];
+
+        try {
+            $this->h->on_init();
+        } finally {
+            unset($_GET['rest_route']);
+        }
+
+        // An array cannot name our route, so this is not a hardening request: the light
+        // path is registered exactly as it would be with no rest_route at all.
+        $this->assertSame([['shutdown', [$this->h, 'run_auto_resume'], 9999]], LSM_Test_Env::$actions);
+    }
+
     public function test_a_rule_somebody_already_put_back_just_clears_the_pause() {
         $this->expire();
         $this->put('content', $this->h->build_block('content', ['block_archives', 'block_debug_log']) . "\n");

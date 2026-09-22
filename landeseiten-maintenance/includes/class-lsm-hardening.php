@@ -577,7 +577,10 @@ class LSM_Hardening {
             $state['rules'][$rule] = !empty($desired[$rule]);
         }
 
-        $state['pause_until']   = $state['pause_until'] === null ? null : (int) $state['pause_until'];
+        // A damaged option (false, '', 0, '0', 'abc', a float, ...) must read as null, never as
+        // the epoch: on_init() would otherwise treat it as "overdue since 1970" and re-apply.
+        $until                  = $state['pause_until'];
+        $state['pause_until']   = (is_int($until) || (is_string($until) && ctype_digit($until))) && (int) $until > 0 ? (int) $until : null;
         $state['rule_failures'] = is_array($state['rule_failures']) ? $state['rule_failures'] : [];
 
         return $state;
@@ -1528,7 +1531,12 @@ class LSM_Hardening {
             $_SERVER['REDIRECT_URL'] ?? '',
         ];
         foreach ($checks as $value) {
-            if (strpos(urldecode((string) $value), '/lsm/v1/hardening') !== false) {
+            // A crafted ?rest_route[]=x turns this into an array: it can never name our
+            // route, and (string) $value would raise "Array to string conversion".
+            if (!is_string($value)) {
+                continue;
+            }
+            if (strpos(urldecode($value), '/lsm/v1/hardening') !== false) {
                 return true;
             }
         }
@@ -1684,7 +1692,10 @@ class LSM_Hardening {
      *
      * - op resume: roll forward — make sure the archive rule is in the block, then clear the pause.
      * - any other op: put the snapshot back (or take our block out of a file that did not exist).
-     * - always: delete snapshot and probe files, clear pending, record crash_recovered.
+     * - on success: delete the snapshot and the probe files, clear pending, record crash_recovered.
+     * - on a failed restore: restore_from_snapshot() already stripped our block as a last resort,
+     *   but the snapshot is the only remaining copy of the original bytes, so only the probe files
+     *   are deleted; pending is still cleared and the outcome is recorded as rollback_failed.
      */
     private function recover() {
         if (!$this->acquire_lock()) {
@@ -1700,34 +1711,42 @@ class LSM_Hardening {
         }
 
         // The file comes from the enum, never from a stored path.
-        $target  = isset($pending['target']) && $pending['target'] === 'uploads' ? 'uploads' : 'content';
-        $op      = isset($pending['op']) ? (string) $pending['op'] : '';
-        $resumed = false;
+        $target   = isset($pending['target']) && $pending['target'] === 'uploads' ? 'uploads' : 'content';
+        $op       = isset($pending['op']) ? (string) $pending['op'] : '';
+        $resumed  = false;
+        $restored = true;
 
         if ($op === 'resume') {
             $resumed = $this->roll_forward_resume();
         } else {
-            $this->restore_from_snapshot($target, !empty($pending['existed']));
+            $restored = $this->restore_from_snapshot($target, !empty($pending['existed']));
         }
 
-        $this->cleanup_artifacts();
+        if ($restored) {
+            $this->cleanup_artifacts();
+        } else {
+            // Keep the snapshot: it is the only copy of the original bytes left.
+            $this->cleanup_probes();
+        }
 
         if ($resumed) {
             $state['pause_until'] = null;
         }
-        $state['pending']     = null;
+        $state['pending'] = null;
+        $reason           = $restored ? 'crash_recovered' : 'rollback_failed';
+
         $state['last_result'] = [
             'at'       => $this->now(),
             'action'   => 'crash_recovery',
             'rule'     => in_array($op, ['pause', 'resume'], true) ? 'block_archives' : null,
             'ok'       => false,
-            'reason'   => 'crash_recovered',
+            'reason'   => $reason,
             'warnings' => [],
         ];
         $this->save_state($state);
         $this->release_lock();
 
-        LSM_Logger::log('hardening_crash_recovered', 'warning', ['op' => $op, 'target' => $target]);
+        LSM_Logger::log('hardening_crash_recovered', $restored ? 'warning' : 'error', ['op' => $op, 'target' => $target, 'reason' => $reason]);
     }
 
     /**
@@ -1761,26 +1780,58 @@ class LSM_Hardening {
     /**
      * Recovery of any other killed operation: back to the bytes from before it started.
      *
+     * A write that is attempted and fails must never take the snapshot down with it — it is
+     * the only remaining copy of the original bytes — so a failed restore falls back to
+     * strip_managed_block(), the same last resort rollback() uses, and reports failure so the
+     * caller (recover()) keeps the snapshot on disk instead of deleting it.
+     *
      * @param string $target  'content' or 'uploads'.
      * @param bool   $existed pending.existed.
+     * @return bool True when the file is verified back to a safe state (the snapshot was
+     *              restored, the strip for a file that did not exist committed, or there was
+     *              nothing to do); false when a write was attempted and failed.
      */
     private function restore_from_snapshot($target, $existed) {
         $snapshot = dirname($this->target_file($target)) . '/' . self::SNAPSHOT_FILE;
 
         if (is_file($snapshot)) {
             $original = @file_get_contents($snapshot);
-            if ($original !== false) {
-                $this->restore_target($target, $original, true);
+            if ($original !== false && $this->restore_target($target, $original, true)) {
+                return true;
             }
-            return;
+            $this->strip_managed_block($target);
+            return false;
         }
 
         if (!$existed) {
             // No snapshot because there was no file: take our block out, delete the file if nothing else is in it.
             $current  = $this->read_target($target);
             $stripped = $this->replace_block($current['content'], '');
-            if ($stripped !== null) {
-                $this->commit_target($target, $stripped, $current['content'], false);
+            if ($stripped === null || $stripped === $current['content']) {
+                return true;
+            }
+            if ($this->commit_target($target, $stripped, $current['content'], false)) {
+                return true;
+            }
+            $this->strip_managed_block($target);
+            return false;
+        }
+
+        // Existed, no snapshot: nothing was ever written for us to undo.
+        return true;
+    }
+
+    /**
+     * Delete only the probe files in both directories, keeping any snapshot untouched.
+     * Used when a crash restore failed and the snapshot is the only remaining copy of the
+     * original bytes; cleanup_artifacts() is used on the normal, successful path instead.
+     */
+    private function cleanup_probes() {
+        foreach ([$this->content_dir(), $this->uploads_dir()] as $dir) {
+            foreach ((array) @scandir($dir) as $name) {
+                if (is_string($name) && $name !== self::SNAPSHOT_FILE && self::is_own_artifact($name) && is_file($dir . '/' . $name)) {
+                    @unlink($dir . '/' . $name);
+                }
             }
         }
     }

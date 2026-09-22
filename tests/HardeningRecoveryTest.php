@@ -77,6 +77,43 @@ class HardeningRecoveryTest extends HardeningTestCase {
         $this->assertSame('off', $this->h->get_status()['rules']['block_archives']['state']);
     }
 
+    public function test_a_failed_restore_keeps_the_snapshot_and_strips_our_block() {
+        $this->put('content', self::FOREIGN);
+        $this->crash_after_write(function () {
+            $this->h->set_rule('block_archives', true);
+        });
+
+        $this->h->time += 181;
+
+        $content_htaccess = $this->htaccess('content');
+        $writes           = 0;
+        $this->h->put_hook = function ($file) use (&$writes, $content_htaccess) {
+            if ($file !== $content_htaccess) {
+                return null;
+            }
+            $writes++;
+            // 1 = the snapshot restore (fails), 2 = the last-resort strip (succeeds).
+            return $writes === 1 ? false : null;
+        };
+
+        $this->h->on_init();
+
+        $this->assertSame(2, $writes);
+        $this->assertSame(self::FOREIGN, file_get_contents($this->content . '/.htaccess.lsm-bak'), 'the snapshot still holds the original bytes');
+        $this->assertStringNotContainsString('LSM-HARDENING', $this->get('content'), 'last resort: the managed block is stripped');
+        $this->assertStringContainsString('WebP Express', $this->get('content'), 'foreign bytes preserved');
+        $this->assertSame(['.htaccess.lsm-bak'], $this->artifacts(), 'probes deleted, the snapshot is kept');
+
+        $state = $this->h->get_state();
+        $this->assertNull($state['pending']);
+        $this->assertSame(
+            ['at' => $this->h->time, 'action' => 'crash_recovery', 'rule' => null, 'ok' => false, 'reason' => 'rollback_failed', 'warnings' => []],
+            $state['last_result']
+        );
+        $this->assertFalse(get_option('lsm_hardening_lock'));
+        $this->assertSame(['hardening_crash_recovered', 'error'], array_slice(end(LSM_Test_Env::$log), 0, 2));
+    }
+
     public function test_killed_enable_on_a_site_without_the_file_deletes_it_again() {
         $this->crash_after_write(function () {
             $this->h->set_rule('block_uploads_php', true);
@@ -234,6 +271,7 @@ class HardeningRecoveryTest extends HardeningTestCase {
         $_SERVER['REQUEST_URI'] = '/wp-json/lsm/v1/hardening/rule';
 
         $this->h->on_init();
+        $this->assertSame('crash_recovered', $this->h->get_state()['last_result']['reason'], 'recovery, not a stale-lock takeover, produced this file');
         $result = $this->h->set_rule('block_archives', true);
 
         $this->assertTrue($result['success']);

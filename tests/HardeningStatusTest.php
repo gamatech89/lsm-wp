@@ -222,4 +222,27 @@ class HardeningStatusTest extends HardeningTestCase {
         update_option('lsm_hardening', ['pause_until' => $this->h->time + 600]);
         $this->assertSame('unsupported', $this->state_of('block_archives'));
     }
+
+    public function test_a_damaged_pause_until_reads_as_null_and_registers_nothing() {
+        foreach ([false, '', 0, '0', 'abc', 1.5] as $value) {
+            $label = var_export($value, true);
+            update_option('lsm_hardening', ['pause_until' => $value]);
+            LSM_Test_Env::$actions = [];
+
+            $this->assertNull($this->h->get_state()['pause_until'], $label);
+            $this->assertFalse($this->h->get_status()['pause_overdue'], $label);
+            $this->assertNotSame('paused', $this->state_of('block_archives'), $label);
+
+            $this->h->on_init();
+            foreach (LSM_Test_Env::$actions as $action) {
+                $this->assertNotSame('shutdown', $action[0], $label);
+            }
+        }
+
+        update_option('lsm_hardening', ['pause_until' => $this->h->time + 60]);
+        $this->assertSame($this->h->time + 60, $this->h->get_state()['pause_until']);
+
+        update_option('lsm_hardening', ['pause_until' => (string) ($this->h->time + 60)]);
+        $this->assertSame($this->h->time + 60, $this->h->get_state()['pause_until']);
+    }
 }
