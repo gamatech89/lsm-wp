@@ -1407,4 +1407,81 @@ class LSM_Hardening {
 
         return $this->respond($ok, $outcome['reason'], $outcome['message'], $outcome['warnings']);
     }
+
+    // =========================================================================
+    // PAUSE AND RESUME
+    // =========================================================================
+
+    /**
+     * Take the archive rule out of the file for a download.
+     *
+     * @param int $minutes 15, 30 or 60.
+     * @return array respond() shape.
+     */
+    public function pause($minutes) {
+        if (!is_int($minutes) || !in_array($minutes, self::PAUSE_MINUTES, true)) {
+            return $this->respond(false, 'invalid_minutes', 'The pause must be 15, 30 or 60 minutes.');
+        }
+
+        $statuses = $this->rule_statuses();
+        $archives = $statuses['block_archives'];
+
+        if ($archives['state'] === 'unsupported') {
+            return $this->respond(false, 'unsupported', sprintf('Not supported on this server (%s).', $archives['unsupported_reason']));
+        }
+
+        if ($archives['state'] === 'paused') {
+            return $this->move_pause($minutes);
+        }
+
+        if ($archives['state'] !== 'on') {
+            return $this->respond(false, 'not_enabled', 'The archive rule is not on, so there is nothing to pause.');
+        }
+
+        // Desired state stays true: the pause only leaves the rule out of the block.
+        return $this->apply('pause', 'block_archives', false, ['pause_minutes' => $minutes]);
+    }
+
+    /**
+     * Pausing while already paused only moves pause_until. No file change, no self-test.
+     *
+     * @param int $minutes 15, 30 or 60.
+     * @return array respond() shape.
+     */
+    private function move_pause($minutes) {
+        if (!$this->acquire_lock()) {
+            return $this->respond(false, 'busy', 'Another hardening operation is running on this site. Try again in a moment.');
+        }
+
+        $state                = $this->get_state();
+        $state['pause_until'] = $this->now() + $minutes * 60;
+        $state['last_result'] = [
+            'at'       => $this->now(),
+            'action'   => 'pause',
+            'rule'     => 'block_archives',
+            'ok'       => true,
+            'reason'   => null,
+            'warnings' => [],
+        ];
+        $this->save_state($state);
+        $this->release_lock();
+
+        LSM_Logger::log('hardening_applied', 'success', ['action' => 'pause', 'rule' => 'block_archives', 'moved' => true]);
+
+        return $this->respond(true, null, sprintf('Already paused — the pause now ends in %d minutes.', $minutes));
+    }
+
+    /**
+     * Put the archive rule back now. Idempotent: a no-op when nothing is paused.
+     *
+     * @return array respond() shape.
+     */
+    public function resume() {
+        $state = $this->get_state();
+        if ($state['pause_until'] === null) {
+            return $this->respond(true, null, 'Nothing is paused.');
+        }
+
+        return $this->apply('resume', 'block_archives', true, ['pause_minutes' => null]);
+    }
 }
