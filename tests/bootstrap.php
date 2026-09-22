@@ -29,3 +29,4 @@ require_once __DIR__ . '/FakeServer.php';
 require_once LSM_PLUGIN_DIR . 'includes/class-lsm-hardening.php';
 require_once __DIR__ . '/TestableHardening.php';
 require_once __DIR__ . '/HardeningTestCase.php';
+require_once __DIR__ . '/Fixtures.php';

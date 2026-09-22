@@ -446,4 +446,104 @@ class LSM_Hardening {
         $written = @file_get_contents($file);
         return $written !== false && sha1($written) === sha1($original);
     }
+
+    // =========================================================================
+    // MANUAL RULES ALREADY ON A SITE (ADOPTION)
+    // =========================================================================
+
+    /**
+     * Opening lines of the hand-written blocks the security-audit procedure appends.
+     *
+     * @return array Rule key => opening line (whitespace-normalised).
+     */
+    private static function manual_openings() {
+        return [
+            'block_archives'    => '<FilesMatch "\.(wpress|sql|zip|tar|gz|bak)$">',
+            'block_debug_log'   => '<Files "debug.log">',
+            'block_uploads_php' => '<FilesMatch "\.php$">',
+        ];
+    }
+
+    /**
+     * Trim a line and collapse inner whitespace runs to one space.
+     *
+     * @param string $line Raw line.
+     * @return string
+     */
+    private function normalize_line($line) {
+        return trim(preg_replace('/\s+/', ' ', $line));
+    }
+
+    /**
+     * Find hand-written deny blocks for a rule, outside our markers.
+     *
+     * A small grammar, not exact text: a known opening line, then only deny /
+     * IfModule lines (at least one deny, IfModule balanced), then the matching
+     * close tag. Anything else is somebody else's rule and is never touched.
+     *
+     * @param string $content File content.
+     * @param string $rule    Rule key.
+     * @return array List of ['start' => int, 'length' => int] byte ranges (whole lines).
+     */
+    public function find_manual_blocks($content, $rule) {
+        $opening = self::manual_openings()[$rule];
+        $close   = self::definitions()[$rule]['close'];
+        $deny    = ['Require all denied', 'Deny from all'];
+        $neutral = ['Order deny,allow', 'Order allow,deny'];
+        $if_open = ['<IfModule mod_authz_core.c>', '<IfModule !mod_authz_core.c>'];
+
+        $managed = $this->parse_markers($content);
+        $blocks  = [];
+        $offset  = 0;
+        $start   = null;
+        $denies  = 0;
+        $depth   = 0;
+
+        foreach (preg_split('/(?<=\n)/', $content) as $line) {
+            $length     = strlen($line);
+            $normalized = $this->normalize_line($line);
+            $in_managed = $managed['found'] && $offset >= $managed['start'] && $offset < $managed['end'];
+
+            if ($in_managed) {
+                $start = null;
+            } elseif ($start !== null && $normalized === $close) {
+                if ($denies > 0 && $depth === 0) {
+                    $blocks[] = ['start' => $start, 'length' => $offset + $length - $start];
+                }
+                $start = null;
+            } elseif ($start !== null && in_array($normalized, $deny, true)) {
+                $denies++;
+            } elseif ($start !== null && in_array($normalized, $if_open, true)) {
+                $depth++;
+            } elseif ($start !== null && $normalized === '</IfModule>' && $depth > 0) {
+                $depth--;
+            } elseif ($start !== null && ($normalized === '' || in_array($normalized, $neutral, true))) {
+                // Allowed filler.
+            } elseif ($normalized === $opening) {
+                $start  = $offset;
+                $denies = 0;
+                $depth  = 0;
+            } else {
+                $start = null;
+            }
+
+            $offset += $length;
+        }
+
+        return $blocks;
+    }
+
+    /**
+     * Remove every recognised manual block of a rule.
+     *
+     * @param string $content File content.
+     * @param string $rule    Rule key.
+     * @return string
+     */
+    public function strip_manual_blocks($content, $rule) {
+        foreach (array_reverse($this->find_manual_blocks($content, $rule)) as $block) {
+            $content = substr($content, 0, $block['start']) . (string) substr($content, $block['start'] + $block['length']);
+        }
+        return $content;
+    }
 }
