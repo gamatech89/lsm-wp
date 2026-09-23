@@ -5,3 +5,7 @@ node_modules/
 
 # Local docs
 *.md
+
+# Dev tooling: PHPUnit runs from the repo root, outside the zipped plugin dir
+vendor/
+.phpunit.result.cache

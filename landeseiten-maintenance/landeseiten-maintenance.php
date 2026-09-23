@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Landeseiten Maintenance
  * Description: Remote site management, SSO login, health monitoring, security scanning, and client support for Landeseiten managed WordPress sites.
- * Version: 2.9.4
+ * Version: 2.10.0
  * Author: Landeseiten GmbH
  * Author URI: https://landeseiten.at
  * License: GPL-2.0+
@@ -19,7 +19,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Plugin constants
-define('LSM_VERSION', '2.9.4');
+define('LSM_VERSION', '2.10.0');
 define('LSM_PLUGIN_FILE', __FILE__);
 define('LSM_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('LSM_PLUGIN_URL', plugin_dir_url(__FILE__));
@@ -83,6 +83,7 @@ final class Landeseiten_Maintenance {
         require_once LSM_PLUGIN_DIR . 'includes/class-lsm-scan-collector.php';
         require_once LSM_PLUGIN_DIR . 'includes/class-lsm-scan-data-collector.php';
         require_once LSM_PLUGIN_DIR . 'includes/class-lsm-media.php';
+        require_once LSM_PLUGIN_DIR . 'includes/class-lsm-hardening.php';
         require_once LSM_PLUGIN_DIR . 'includes/class-lsm-updater.php';
 
         // Admin
@@ -220,6 +221,10 @@ final class Landeseiten_Maintenance {
 
         // Initialize PHP error handling
         LSM_Php_Errors::init();
+
+        // Managed .htaccess hardening: crash recovery and pause expiry. Must stay on `init`,
+        // after LSM_Logger::init() — both log, and the logger needs pluggable.php.
+        LSM_Hardening::instance()->on_init();
 
         if (is_admin()) {
             new LSM_Admin();
@@ -425,6 +430,9 @@ final class Landeseiten_Maintenance {
         $settings = get_option('lsm_settings', []);
         $settings['maintenance_mode'] = false;
         update_option('lsm_settings', $settings);
+
+        // A deactivated plugin can neither pause nor undo: take the managed .htaccess blocks out
+        LSM_Hardening::instance()->deactivate();
 
         flush_rewrite_rules();
     }
