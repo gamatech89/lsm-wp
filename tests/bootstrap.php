@@ -13,6 +13,16 @@ if (!is_dir($lsm_test_root . 'wp-content/uploads')) {
     mkdir($lsm_test_root . 'wp-content/uploads', 0777, true);
 }
 
+// update_all_plugins() require_once()s these admin files; empty stand-ins are enough.
+if (!is_dir($lsm_test_root . 'wp-admin/includes')) {
+    mkdir($lsm_test_root . 'wp-admin/includes', 0777, true);
+}
+foreach (['update', 'plugin', 'class-wp-upgrader', 'plugin-install', 'file'] as $lsm_admin_file) {
+    if (!file_exists($lsm_test_root . 'wp-admin/includes/' . $lsm_admin_file . '.php')) {
+        file_put_contents($lsm_test_root . 'wp-admin/includes/' . $lsm_admin_file . '.php', "<?php\n");
+    }
+}
+
 // The class files exit silently without ABSPATH.
 define('ABSPATH', $lsm_test_root);
 define('WP_CONTENT_DIR', $lsm_test_root . 'wp-content');
@@ -23,6 +33,7 @@ define('LSM_PLUGIN_DIR', dirname(__DIR__) . '/landeseiten-maintenance/');
 define('LSM_PLUGIN_URL', 'http://example.test/wp-content/plugins/landeseiten-maintenance/');
 
 require_once __DIR__ . '/stubs/wp-functions.php';
+require_once __DIR__ . '/stubs/wp-upgrader.php';
 require_once __DIR__ . '/FakeServer.php';
 
 // Classes under test and their test doubles.
@@ -32,3 +43,4 @@ require_once __DIR__ . '/HardeningTestCase.php';
 require_once __DIR__ . '/Fixtures.php';
 require_once LSM_PLUGIN_DIR . 'includes/class-lsm-api.php';
 require_once LSM_PLUGIN_DIR . 'includes/class-lsm-security-scanner.php';
+require_once LSM_PLUGIN_DIR . 'includes/class-lsm-actions.php';

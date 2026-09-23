@@ -570,6 +570,21 @@ class LSM_Actions {
             ];
         }
 
+        try {
+            return self::run_plugin_updates();
+        } finally {
+            // Always release the lock, also when something outside the per-plugin
+            // try/catch throws: a wedged lock would block updates for 15 minutes.
+            WP_Upgrader::release_lock('lsm_bulk_plugin_update');
+        }
+    }
+
+    /**
+     * The bulk update itself; only ever called while holding the update lock.
+     *
+     * @return array
+     */
+    private static function run_plugin_updates() {
         // A client disconnect or gateway timeout must not kill the process while a
         // plugin folder is half-copied — that abort is exactly what corrupts a plugin.
         ignore_user_abort(true);
@@ -686,9 +701,6 @@ class LSM_Actions {
                 ]);
             }
         }
-
-        // Release the concurrency lock so the next update run can proceed.
-        WP_Upgrader::release_lock('lsm_bulk_plugin_update');
 
         LSM_Logger::log('plugins_updated', 'success', [
             'updated' => count($updated),
