@@ -541,12 +541,6 @@ class LSM_Actions {
             define('FS_METHOD', 'direct');
         }
 
-        // Force direct filesystem method — avoids request_filesystem_credentials()
-        // which requires full admin UI context not available in REST API
-        if (!defined('FS_METHOD')) {
-            define('FS_METHOD', 'direct');
-        }
-
         if (!function_exists('get_plugin_updates')) {
             require_once ABSPATH . 'wp-admin/includes/update.php';
         }
@@ -557,6 +551,30 @@ class LSM_Actions {
         require_once ABSPATH . 'wp-admin/includes/plugin-install.php';
         require_once ABSPATH . 'wp-admin/includes/file.php';
 
+        // CONCURRENCY GUARD: two overlapping update runs race on the same plugin
+        // folders — one moves a plugin aside into upgrade-temp-backup while the
+        // other is still copying the new version into place — which can leave a
+        // plugin half-written and fatal on every request. WP_Upgrader's own lock
+        // lets only one run proceed; the 15-minute timeout means a crashed run
+        // can't wedge updates for longer than that.
+        if (!WP_Upgrader::create_lock('lsm_bulk_plugin_update', 15 * MINUTE_IN_SECONDS)) {
+            return [
+                'success'       => false,
+                'locked'        => true,
+                'message'       => __('Another plugin update is already running on this site. Please wait for it to finish before starting a new one.', 'landeseiten-maintenance'),
+                'updated'       => [],
+                'failed'        => [],
+                'reactivated'   => [],
+                'skipped'       => [],
+                'updated_count' => 0,
+            ];
+        }
+
+        // A client disconnect or gateway timeout must not kill the process while a
+        // plugin folder is half-copied — that abort is exactly what corrupts a plugin.
+        ignore_user_abort(true);
+        @set_time_limit(0);
+
         // Refresh update cache before checking for available updates
         wp_update_plugins();
 
@@ -564,6 +582,7 @@ class LSM_Actions {
         $updated = [];
         $failed = [];
         $reactivated = [];
+        $skipped = [];
 
         // CRITICAL: Save active state of ALL plugins before any updates
         $active_plugins = get_option('active_plugins', []);
@@ -573,6 +592,14 @@ class LSM_Actions {
         $saved_update_transient = get_site_transient('update_plugins');
 
         foreach ($plugin_updates as $file => $data) {
+            // Never update our own plugin inside the bulk loop: doing so swaps out
+            // the very code executing this request mid-run. Self-updates go through
+            // LSM_Updater (GitHub release) on their own path instead.
+            if ($file === LSM_PLUGIN_BASENAME) {
+                $skipped[] = $data->Name;
+                continue;
+            }
+
             // Restore the transient before each upgrade so download URLs are available
             set_site_transient('update_plugins', $saved_update_transient);
             $was_active = in_array($file, $active_plugins, true);
@@ -642,10 +669,33 @@ class LSM_Actions {
         }
 
 
+        // POST-UPDATE HEALTH CHECK: a bad update can leave a fatal that only shows on
+        // the front end, so probe the home page over loopback and report the status
+        // back to the platform instead of blindly returning "success".
+        $health_after = null;
+        $health_probe = wp_remote_get(
+            add_query_arg('lsm_health', time(), home_url('/')),
+            ['timeout' => 15, 'sslverify' => false, 'redirection' => 2]
+        );
+        if (!is_wp_error($health_probe)) {
+            $health_after = (int) wp_remote_retrieve_response_code($health_probe);
+            if ($health_after >= 500) {
+                LSM_Logger::log('plugins_updated_site_unhealthy', 'error', [
+                    'http_status' => $health_after,
+                    'updated'     => $updated,
+                ]);
+            }
+        }
+
+        // Release the concurrency lock so the next update run can proceed.
+        WP_Upgrader::release_lock('lsm_bulk_plugin_update');
+
         LSM_Logger::log('plugins_updated', 'success', [
             'updated' => count($updated),
             'failed'  => count($failed),
             'reactivated' => count($reactivated),
+            'skipped' => count($skipped),
+            'health_after' => $health_after,
         ]);
 
         return [
@@ -653,7 +703,9 @@ class LSM_Actions {
             'updated'       => $updated,
             'failed'        => $failed,
             'reactivated'   => $reactivated,
+            'skipped'       => $skipped,
             'updated_count' => count($updated),
+            'health_after'  => $health_after,
         ];
     }
 
