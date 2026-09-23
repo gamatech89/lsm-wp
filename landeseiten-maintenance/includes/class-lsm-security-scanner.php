@@ -483,6 +483,7 @@ class LSM_Security_Scanner {
         foreach ($iterator as $file) {
             if ($this->is_timed_out()) break;
             if (!$file->isFile()) continue;
+            if (LSM_Hardening::is_own_artifact($file->getFilename())) continue;
 
             $ext = strtolower($file->getExtension());
             if (in_array($ext, $extensions)) {
@@ -510,6 +511,7 @@ class LSM_Security_Scanner {
             $count++;
 
             $name = $file->getFilename();
+            if (LSM_Hardening::is_own_artifact($name)) continue;
             // Check for patterns like "something.php.jpg"
             if (preg_match('/\.(' . implode('|', $dangerous_inner_exts) . ')\.\w+$/i', $name)) {
                 $result['findings'][] = [
@@ -540,6 +542,7 @@ class LSM_Security_Scanner {
             $count++;
 
             $name = $file->getFilename();
+            if (LSM_Hardening::is_own_artifact($name)) continue;
             if ($name[0] === '.' && !in_array($name, $skip_hidden)) {
                 // Check if it's a PHP file hidden with a dot prefix
                 $ext = strtolower($file->getExtension());
