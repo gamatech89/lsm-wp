@@ -251,6 +251,16 @@ class LSM_Admin {
                 <!-- Two-column row for Support and Maintenance -->
                 <div class="lsm-row">
                     <!-- Contact Support Card -->
+                    <?php if (!LSM_TICKETING_ENABLED) : ?>
+                    <div class="lsm-card" id="support-form">
+                        <div class="lsm-card-header">
+                            <h2><span class="dashicons dashicons-sos"></span> <?php _e('Contact Support', 'landeseiten-maintenance'); ?></h2>
+                        </div>
+                        <div class="lsm-card-body">
+                            <p class="lsm-help"><?php _e('Support tickets are temporarily disabled. Please contact us by e-mail.', 'landeseiten-maintenance'); ?></p>
+                        </div>
+                    </div>
+                    <?php else : ?>
                     <div class="lsm-card" id="support-form">
                         <div class="lsm-card-header">
                             <h2><span class="dashicons dashicons-sos"></span> <?php _e('Contact Support', 'landeseiten-maintenance'); ?></h2>
@@ -336,6 +346,7 @@ class LSM_Admin {
                             </form>
                         </div>
                     </div>
+                    <?php endif; ?>
 
                     <!-- Maintenance Mode Card -->
                     <div class="lsm-card">

@@ -18,12 +18,32 @@ class LSM_Support {
      * Constructor.
      */
     public function __construct() {
+        // Ticketing switched off: every ticket action answers "temporarily
+        // disabled" instead of touching the platform.
+        if (!LSM_TICKETING_ENABLED) {
+            foreach (['lsm_submit_support', 'lsm_tickets_list', 'lsm_ticket_detail', 'lsm_ticket_reply', 'lsm_ticket_attachment', 'lsm_tickets_unread'] as $action) {
+                add_action('wp_ajax_' . $action, [$this, 'ajax_ticketing_disabled']);
+            }
+
+            return;
+        }
+
         add_action('wp_ajax_lsm_submit_support', [$this, 'handle_submit']);
         add_action('wp_ajax_lsm_tickets_list', [$this, 'ajax_tickets_list']);
         add_action('wp_ajax_lsm_ticket_detail', [$this, 'ajax_ticket_detail']);
         add_action('wp_ajax_lsm_ticket_reply', [$this, 'ajax_ticket_reply']);
         add_action('wp_ajax_lsm_ticket_attachment', [$this, 'ajax_ticket_attachment']);
         add_action('wp_ajax_lsm_tickets_unread', [$this, 'ajax_tickets_unread']);
+    }
+
+    /**
+     * Answer for every ticket action while LSM_TICKETING_ENABLED is false.
+     */
+    public function ajax_ticketing_disabled() {
+        wp_send_json_error(
+            ['message' => __('Support tickets are temporarily disabled. Please contact us by e-mail.', 'landeseiten-maintenance')],
+            503
+        );
     }
 
     /**

@@ -44,3 +44,4 @@ require_once __DIR__ . '/Fixtures.php';
 require_once LSM_PLUGIN_DIR . 'includes/class-lsm-api.php';
 require_once LSM_PLUGIN_DIR . 'includes/class-lsm-security-scanner.php';
 require_once LSM_PLUGIN_DIR . 'includes/class-lsm-actions.php';
+require_once LSM_PLUGIN_DIR . 'includes/class-lsm-support.php';
