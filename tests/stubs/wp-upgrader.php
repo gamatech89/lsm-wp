@@ -159,3 +159,22 @@ class Plugin_Upgrader extends WP_Upgrader {
             : true;
     }
 }
+
+// -----------------------------------------------------------------------------
+// Ticketing kill switch: the constant the plugin's main file defines (false in
+// tests, like the shipped default) and a wp_send_json_error() that records
+// instead of exiting.
+// -----------------------------------------------------------------------------
+
+if (!defined('LSM_TICKETING_ENABLED')) {
+    define('LSM_TICKETING_ENABLED', false);
+}
+
+class LSM_Test_Json {
+    /** @var array list of [payload, status] passed to wp_send_json_error() */
+    public static $errors = [];
+}
+
+function wp_send_json_error($data = null, $status_code = null) {
+    LSM_Test_Json::$errors[] = [$data, $status_code];
+}
